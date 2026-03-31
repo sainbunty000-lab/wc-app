@@ -1,0 +1,1064 @@
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import logging
+from pathlib import Path
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+import uuid
+from datetime import datetime
+import base64
+import tempfile
+import json
+import re
+import io
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# MongoDB connection - with fallback for missing URL
+mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
+try:
+    client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=5000)
+    db = client[os.environ.get('DB_NAME', 'financial_analytics')]
+except Exception as e:
+    logger.warning(f"MongoDB connection failed initially: {e}. Will retry on first request.")
+    client = None
+    db = None
+
+# Emergent LLM Key for Gemini Vision
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+
+# Create the main app
+app = FastAPI(title="Financial Analytics API")
+
+# Create a router with the /api prefix
+api_router = APIRouter(prefix="/api")
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# ===================== MODELS =====================
+
+class BalanceSheetValues(BaseModel):
+    current_assets: float = 0
+    current_liabilities: float = 0
+    inventory: float = 0
+    debtors: float = 0
+    creditors: float = 0
+    cash_bank_balance: float = 0
+
+class ProfitLossValues(BaseModel):
+    revenue: float = 0
+    cogs: float = 0
+    purchases: float = 0
+    operating_expenses: float = 0
+    net_profit: float = 0
+
+class WorkingCapitalInput(BaseModel):
+    company_name: str = "Company"
+    balance_sheet: BalanceSheetValues
+    profit_loss: ProfitLossValues
+    projected_turnover: float = 0
+
+class WorkingCapitalResult(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_name: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    input_data: Dict[str, Any]
+    current_ratio: float
+    quick_ratio: float
+    debtor_days: float
+    creditor_days: float
+    inventory_turnover: float
+    wc_cycle: float
+    gross_margin: float
+    net_margin: float
+    net_working_capital: float
+    mpbf_method_1: float
+    mpbf_method_2: float
+    turnover_method: float
+    eligible: bool
+    wc_limit: float
+    score: int
+    assessment: List[str]
+    recommendation: str
+    analysis_type: str = "working_capital"
+
+class BankingInput(BaseModel):
+    company_name: str = "Company"
+    total_credits: float = 0
+    total_debits: float = 0
+    average_balance: float = 0
+    minimum_balance: float = 0
+    opening_balance: float = 0
+    closing_balance: float = 0
+    cash_deposits: float = 0
+    cheque_bounces: int = 0
+    loan_repayments: float = 0
+    overdraft_usage: float = 0
+    ecs_emi_payments: float = 0
+    num_transactions: int = 0
+    sanctioned_limit: float = 0
+    utilized_limit: float = 0
+
+class BankingResult(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_name: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    input_data: Dict[str, Any]
+    credit_score: int
+    grade: str
+    risk_level: str
+    liquidity_score: int
+    cash_flow_score: int
+    credit_score_component: int
+    repayment_score: int
+    stability_score: int
+    working_capital_status: str
+    liquidity_status: str
+    cash_flow_status: str
+    creditworthiness_status: str
+    repayment_status: str
+    stability_status: str
+    behavior_status: str
+    strengths: List[str]
+    concerns: List[str]
+    recommendation: str
+    analysis_type: str = "banking"
+
+class YearData(BaseModel):
+    year: str
+    balance_sheet: BalanceSheetValues
+    profit_loss: ProfitLossValues
+
+class MultiYearInput(BaseModel):
+    company_name: str = "Company"
+    years_data: List[YearData]
+
+class MultiYearResult(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_name: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    input_data: Dict[str, Any]
+    years: List[str]
+    trends: Dict[str, List[float]]
+    insights: List[str]
+    recommendation: str
+    analysis_type: str = "multi_year"
+
+class Case(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_name: str
+    analysis_type: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    data: Dict[str, Any]
+
+# ===================== HELPER FUNCTIONS =====================
+
+def calculate_working_capital(data: WorkingCapitalInput) -> WorkingCapitalResult:
+    bs = data.balance_sheet
+    pl = data.profit_loss
+    
+    current_ratio = bs.current_assets / bs.current_liabilities if bs.current_liabilities > 0 else 0
+    quick_ratio = (bs.current_assets - bs.inventory) / bs.current_liabilities if bs.current_liabilities > 0 else 0
+    
+    debtor_days = (bs.debtors / pl.revenue * 365) if pl.revenue > 0 else 0
+    creditor_days = (bs.creditors / pl.purchases * 365) if pl.purchases > 0 else 0
+    inventory_days = (bs.inventory / pl.cogs * 365) if pl.cogs > 0 else 0
+    inventory_turnover = pl.cogs / bs.inventory if bs.inventory > 0 else 0
+    
+    wc_cycle = debtor_days + inventory_days - creditor_days
+    
+    gross_margin = ((pl.revenue - pl.cogs) / pl.revenue * 100) if pl.revenue > 0 else 100
+    net_margin = (pl.net_profit / pl.revenue * 100) if pl.revenue > 0 else 0
+    
+    net_working_capital = bs.current_assets - bs.current_liabilities
+    
+    mpbf_method_1 = max(0, 0.75 * net_working_capital)
+    mpbf_method_2 = max(0, 0.75 * bs.current_assets - bs.current_liabilities)
+    
+    projected_turnover = data.projected_turnover if data.projected_turnover > 0 else pl.revenue
+    turnover_method = 0.20 * projected_turnover
+    
+    wc_limit = max(mpbf_method_1, mpbf_method_2, turnover_method)
+    
+    eligible = current_ratio >= 1.33 and quick_ratio >= 1.0
+    
+    assessment = []
+    if current_ratio < 1.33:
+        assessment.append(f"Current Ratio {current_ratio:.2f}x — below 1.33x benchmark")
+    else:
+        assessment.append(f"Current Ratio {current_ratio:.2f}x — meets benchmark")
+    
+    if quick_ratio < 1.0:
+        assessment.append(f"Quick Ratio {quick_ratio:.2f}x — may face liquidity pressure")
+    else:
+        assessment.append(f"Quick Ratio {quick_ratio:.2f}x — healthy liquidity")
+    
+    if net_margin < 5:
+        assessment.append(f"Net Margin {net_margin:.1f}% — monitor for improvement")
+    else:
+        assessment.append(f"Net Margin {net_margin:.1f}% — healthy profitability")
+    
+    if wc_cycle > 90:
+        assessment.append(f"WC Cycle {wc_cycle:.0f} days — extended cycle, optimize receivables")
+    else:
+        assessment.append(f"WC Cycle {wc_cycle:.0f} days — efficient operations")
+    
+    score = 0
+    if current_ratio >= 1.33: score += 25
+    elif current_ratio >= 1.0: score += 15
+    elif current_ratio > 0: score += 5
+    
+    if quick_ratio >= 1.0: score += 25
+    elif quick_ratio >= 0.75: score += 15
+    elif quick_ratio > 0: score += 5
+    
+    if net_margin >= 10: score += 25
+    elif net_margin >= 5: score += 15
+    elif net_margin > 0: score += 10
+    
+    if wc_cycle <= 60: score += 25
+    elif wc_cycle <= 90: score += 15
+    else: score += 5
+    
+    if eligible:
+        recommendation = f"Working capital position is healthy. Recommended WC limit of ₹{wc_limit:,.0f} based on financial analysis. Entity qualifies for working capital financing."
+    else:
+        issues = []
+        if current_ratio < 1.33:
+            issues.append("Current Ratio below minimum benchmark")
+        if quick_ratio < 1.0:
+            issues.append("liquidity concerns")
+        recommendation = f"Working capital position is inadequate for loan eligibility at this time. {' and '.join(issues)}. Suggest reapplication after improving current asset position."
+    
+    return WorkingCapitalResult(
+        company_name=data.company_name,
+        input_data={
+            "balance_sheet": bs.dict(),
+            "profit_loss": pl.dict(),
+            "projected_turnover": data.projected_turnover
+        },
+        current_ratio=round(current_ratio, 2),
+        quick_ratio=round(quick_ratio, 2),
+        debtor_days=round(debtor_days, 0),
+        creditor_days=round(creditor_days, 0),
+        inventory_turnover=round(inventory_turnover, 2),
+        wc_cycle=round(wc_cycle, 0),
+        gross_margin=round(gross_margin, 1),
+        net_margin=round(net_margin, 1),
+        net_working_capital=net_working_capital,
+        mpbf_method_1=round(mpbf_method_1, 0),
+        mpbf_method_2=round(mpbf_method_2, 0),
+        turnover_method=round(turnover_method, 0),
+        eligible=eligible,
+        wc_limit=round(wc_limit, 0),
+        score=score,
+        assessment=assessment,
+        recommendation=recommendation
+    )
+
+def calculate_banking_score(data: BankingInput) -> BankingResult:
+    if data.average_balance > 0:
+        balance_ratio = data.minimum_balance / data.average_balance if data.average_balance > 0 else 0
+        liquidity_score = min(100, int(balance_ratio * 100 + 35))
+    else:
+        liquidity_score = 35
+    
+    if data.total_credits > 0:
+        cf_ratio = (data.total_credits - data.total_debits) / data.total_credits
+        cash_flow_score = min(100, max(0, int(50 + cf_ratio * 50)))
+    else:
+        cash_flow_score = 50
+    
+    bounce_rate = data.cheque_bounces / max(data.num_transactions, 1)
+    credit_component = max(0, int(100 - bounce_rate * 500))
+    
+    if data.ecs_emi_payments > 0:
+        repayment_score = min(100, int(65 + (data.loan_repayments / data.ecs_emi_payments) * 35))
+    else:
+        repayment_score = 65
+    
+    if data.opening_balance > 0 and data.closing_balance > 0:
+        stability_ratio = min(data.opening_balance, data.closing_balance) / max(data.opening_balance, data.closing_balance)
+        stability_score = min(100, int(stability_ratio * 100))
+    else:
+        stability_score = 70
+    
+    credit_score = int(
+        liquidity_score * 0.15 +
+        cash_flow_score * 0.25 +
+        credit_component * 0.25 +
+        repayment_score * 0.20 +
+        stability_score * 0.15
+    )
+    
+    if credit_score >= 85:
+        grade = "A"
+        risk_level = "Low"
+    elif credit_score >= 65:
+        grade = "B"
+        risk_level = "Medium"
+    elif credit_score >= 50:
+        grade = "C"
+        risk_level = "High"
+    else:
+        grade = "D"
+        risk_level = "Very High"
+    
+    def get_status(score):
+        if score >= 70:
+            return "Adequate"
+        elif score >= 50:
+            return "Moderate"
+        else:
+            return "Weak"
+    
+    working_capital_status = get_status(cash_flow_score)
+    liquidity_status = get_status(liquidity_score)
+    cash_flow_status = get_status(cash_flow_score)
+    creditworthiness_status = get_status(credit_component)
+    repayment_status = get_status(repayment_score)
+    stability_status = "Strong" if stability_score >= 80 else "Adequate" if stability_score >= 60 else "Weak"
+    behavior_status = "Disciplined" if data.cheque_bounces <= 2 else "Needs Improvement"
+    
+    strengths = []
+    concerns = []
+    
+    if stability_score >= 70:
+        strengths.append("Stable financial profile")
+    if cash_flow_score >= 70:
+        strengths.append("Healthy cash flow management")
+    if credit_component >= 80:
+        strengths.append("Good credit discipline")
+    if repayment_score >= 70:
+        strengths.append("Consistent repayment behavior")
+    
+    if liquidity_score < 50:
+        concerns.append("Liquidity is inadequate")
+    if data.cheque_bounces > 3:
+        concerns.append(f"High cheque bounces ({data.cheque_bounces})")
+    if cash_flow_score < 50:
+        concerns.append("Cash flow needs monitoring")
+    if data.overdraft_usage > data.sanctioned_limit * 0.8 if data.sanctioned_limit > 0 else False:
+        concerns.append("High overdraft utilization")
+    
+    if not strengths:
+        strengths.append("Room for improvement across metrics")
+    if not concerns:
+        concerns.append("No major concerns identified")
+    
+    if grade in ["A", "B"]:
+        recommendation = f"The borrower presents a {grade.lower() if grade == 'B' else 'strong'} banking profile ({credit_score}/100) with {len(concerns) if concerns[0] != 'No major concerns identified' else 'no'} minor concerns. Recommend {'full' if grade == 'A' else 'conditional'} approval with {'standard' if grade == 'A' else 'quarterly'} monitoring of account operations and financial statements."
+    else:
+        recommendation = f"The borrower presents a {grade.lower()} banking profile ({credit_score}/100) with significant concerns. {'Review required before approval.' if grade == 'C' else 'Not recommended for approval at this time.'}"
+    
+    return BankingResult(
+        company_name=data.company_name,
+        input_data=data.dict(),
+        credit_score=credit_score,
+        grade=grade,
+        risk_level=risk_level,
+        liquidity_score=liquidity_score,
+        cash_flow_score=cash_flow_score,
+        credit_score_component=credit_component,
+        repayment_score=repayment_score,
+        stability_score=stability_score,
+        working_capital_status=working_capital_status,
+        liquidity_status=liquidity_status,
+        cash_flow_status=cash_flow_status,
+        creditworthiness_status=creditworthiness_status,
+        repayment_status=repayment_status,
+        stability_status=stability_status,
+        behavior_status=behavior_status,
+        strengths=strengths,
+        concerns=concerns,
+        recommendation=recommendation
+    )
+
+def calculate_multi_year_trends(data: MultiYearInput) -> MultiYearResult:
+    years = [yd.year for yd in data.years_data]
+    
+    trends = {
+        "revenue": [],
+        "net_profit": [],
+        "current_ratio": [],
+        "net_working_capital": [],
+        "gross_margin": [],
+        "net_margin": []
+    }
+    
+    for yd in data.years_data:
+        bs = yd.balance_sheet
+        pl = yd.profit_loss
+        
+        trends["revenue"].append(pl.revenue)
+        trends["net_profit"].append(pl.net_profit)
+        
+        current_ratio = bs.current_assets / bs.current_liabilities if bs.current_liabilities > 0 else 0
+        trends["current_ratio"].append(round(current_ratio, 2))
+        
+        nwc = bs.current_assets - bs.current_liabilities
+        trends["net_working_capital"].append(nwc)
+        
+        gross_margin = ((pl.revenue - pl.cogs) / pl.revenue * 100) if pl.revenue > 0 else 0
+        trends["gross_margin"].append(round(gross_margin, 1))
+        
+        net_margin = (pl.net_profit / pl.revenue * 100) if pl.revenue > 0 else 0
+        trends["net_margin"].append(round(net_margin, 1))
+    
+    insights = []
+    rev_growth = 0
+    
+    if len(trends["revenue"]) >= 2:
+        rev_growth = ((trends["revenue"][-1] - trends["revenue"][0]) / trends["revenue"][0] * 100) if trends["revenue"][0] > 0 else 0
+        if rev_growth > 0:
+            insights.append(f"Revenue grew by {rev_growth:.1f}% over the period")
+        else:
+            insights.append(f"Revenue declined by {abs(rev_growth):.1f}% over the period")
+    
+    if len(trends["net_profit"]) >= 2:
+        if trends["net_profit"][-1] > trends["net_profit"][0]:
+            insights.append("Net profit shows improving trend")
+        else:
+            insights.append("Net profit shows declining trend - monitor profitability")
+    
+    if len(trends["current_ratio"]) >= 2:
+        if trends["current_ratio"][-1] >= 1.33:
+            insights.append("Current ratio meets benchmark in latest year")
+        else:
+            insights.append("Current ratio below benchmark - liquidity concern")
+    
+    avg_margin = sum(trends["net_margin"]) / len(trends["net_margin"]) if trends["net_margin"] else 0
+    if avg_margin >= 10:
+        insights.append(f"Average net margin of {avg_margin:.1f}% indicates healthy profitability")
+    elif avg_margin >= 5:
+        insights.append(f"Average net margin of {avg_margin:.1f}% is moderate")
+    else:
+        insights.append(f"Average net margin of {avg_margin:.1f}% needs improvement")
+    
+    positive_signals = sum([
+        rev_growth > 10,
+        trends["current_ratio"][-1] >= 1.33 if trends["current_ratio"] else False,
+        avg_margin >= 5
+    ])
+    
+    if positive_signals >= 2:
+        recommendation = "Multi-year analysis shows positive financial trajectory. Business demonstrates growth potential and improving financial health."
+    elif positive_signals == 1:
+        recommendation = "Multi-year analysis shows mixed signals. Some metrics improving while others need attention. Recommend focused improvement in weak areas."
+    else:
+        recommendation = "Multi-year analysis indicates challenges in financial performance. Comprehensive business review recommended before financing decisions."
+    
+    return MultiYearResult(
+        company_name=data.company_name,
+        input_data={"years_data": [yd.dict() for yd in data.years_data]},
+        years=years,
+        trends=trends,
+        insights=insights,
+        recommendation=recommendation
+    )
+
+# ===================== GEMINI VISION PARSING (via Emergent LLM) =====================
+
+async def analyze_document_with_gemini(file_path: str, mime_type: str, document_type: str) -> Dict[str, Any]:
+    """Use Gemini Vision via Emergent LLM to extract financial data from documents"""
+    try:
+        if not EMERGENT_LLM_KEY:
+            logger.warning("EMERGENT_LLM_KEY not configured")
+            return {"success": False, "error": "AI key not configured", "parsed_data": {}}
+        
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContentWithMimeType
+        
+        if document_type == "balance_sheet":
+            prompt = """Analyze this Balance Sheet document and extract the following financial values.
+Return ONLY a valid JSON object with these exact keys (use 0 if value not found):
+{
+    "current_assets": <number>,
+    "current_liabilities": <number>,
+    "inventory": <number>,
+    "debtors": <number>,
+    "creditors": <number>,
+    "cash_bank_balance": <number>
+}
+Return only the JSON object, no explanations or markdown."""
+        elif document_type == "profit_loss":
+            prompt = """Analyze this Profit & Loss Statement document and extract the following financial values.
+Return ONLY a valid JSON object with these exact keys (use 0 if value not found):
+{
+    "revenue": <number>,
+    "cogs": <number>,
+    "purchases": <number>,
+    "operating_expenses": <number>,
+    "net_profit": <number>
+}
+Return only the JSON object, no explanations or markdown."""
+        elif document_type == "bank_statement":
+            prompt = """Analyze this Bank Statement document and extract the following financial values.
+Return ONLY a valid JSON object with these exact keys (use 0 if value not found):
+{
+    "total_credits": <number>,
+    "total_debits": <number>,
+    "average_balance": <number>,
+    "minimum_balance": <number>,
+    "opening_balance": <number>,
+    "closing_balance": <number>,
+    "cash_deposits": <number>,
+    "cheque_bounces": <number>,
+    "loan_repayments": <number>,
+    "overdraft_usage": <number>,
+    "ecs_emi_payments": <number>,
+    "num_transactions": <number>
+}
+Return only the JSON object, no explanations or markdown."""
+        else:
+            prompt = """Analyze this financial document and extract all numerical financial data you can find.
+Return ONLY a valid JSON object with the extracted key-value pairs. Use descriptive keys.
+Return only the JSON object, no explanations or markdown."""
+        
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"parse-{uuid.uuid4()}",
+            system_message="You are a financial document analysis expert. Extract precise numerical values from financial documents. Always return valid JSON only."
+        )
+        chat.with_model("gemini", "gemini-2.5-flash")
+        
+        file_content = FileContentWithMimeType(
+            file_path=file_path,
+            mime_type=mime_type
+        )
+        
+        user_message = UserMessage(
+            text=prompt,
+            file_contents=[file_content]
+        )
+        
+        response = await chat.send_message(user_message)
+        response_text = response.strip()
+        
+        logger.info(f"Gemini response: {response_text[:500]}")
+        
+        # Extract JSON from response
+        json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
+        if json_match:
+            parsed_data = json.loads(json_match.group())
+            return {"success": True, "parsed_data": parsed_data, "raw_text": response_text}
+        
+        # Try parsing the whole response as JSON
+        parsed_data = json.loads(response_text)
+        return {"success": True, "parsed_data": parsed_data, "raw_text": response_text}
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse error: {e}")
+        return {"success": False, "error": "Could not parse AI response as JSON", "parsed_data": {}, "raw_text": response_text if 'response_text' in dir() else ""}
+    except Exception as e:
+        logger.error(f"Gemini Vision Error: {e}")
+        return {"success": False, "error": str(e), "parsed_data": {}}
+
+# ===================== API ROUTES =====================
+
+@api_router.get("/")
+async def root():
+    return {"message": "Financial Analytics API", "version": "2.0.0"}
+
+@api_router.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "ai_enabled": bool(EMERGENT_LLM_KEY)}
+
+# Document Parsing via Gemini Vision
+@api_router.post("/parse/upload")
+async def parse_uploaded_file(
+    file: UploadFile = File(...),
+    document_type: str = Form("balance_sheet")
+):
+    """Parse uploaded financial document using Gemini Vision AI"""
+    try:
+        file_content = await file.read()
+        
+        if len(file_content) == 0:
+            return {"success": False, "message": "Empty file received"}
+        
+        # Determine mime type
+        mime_type = file.content_type or "application/octet-stream"
+        filename = file.filename or "document"
+        
+        # Map common extensions to mime types
+        ext = filename.lower().split('.')[-1] if '.' in filename else ''
+        mime_map = {
+            'pdf': 'application/pdf',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'webp': 'image/webp',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'xls': 'application/vnd.ms-excel',
+            'csv': 'text/csv',
+        }
+        if ext in mime_map:
+            mime_type = mime_map[ext]
+        
+        logger.info(f"Parsing document: {filename}, size: {len(file_content)} bytes, type: {mime_type}, doc_type: {document_type}")
+        
+        # Save to temp file
+        suffix = f".{ext}" if ext else ".tmp"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(file_content)
+            tmp_path = tmp.name
+        
+        try:
+            result = await analyze_document_with_gemini(tmp_path, mime_type, document_type)
+        finally:
+            os.unlink(tmp_path)
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "parsed_data": result["parsed_data"],
+                "message": "Document parsed successfully using AI Vision!"
+            }
+        else:
+            return {
+                "success": False,
+                "parsed_data": {},
+                "message": result.get("error", "Could not extract data from document.")
+            }
+        
+    except Exception as e:
+        logger.error(f"Upload parse error: {e}")
+        return {
+            "success": False,
+            "parsed_data": {},
+            "message": f"Error parsing document: {str(e)}"
+        }
+
+# Working Capital Analysis
+@api_router.post("/analysis/wc", response_model=WorkingCapitalResult)
+async def analyze_working_capital(data: WorkingCapitalInput):
+    try:
+        result = calculate_working_capital(data)
+        return result
+    except Exception as e:
+        logger.error(f"WC Analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Banking Analysis
+@api_router.post("/analysis/banking", response_model=BankingResult)
+async def analyze_banking(data: BankingInput):
+    try:
+        result = calculate_banking_score(data)
+        return result
+    except Exception as e:
+        logger.error(f"Banking Analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Multi-Year Trend Analysis
+@api_router.post("/analysis/trend", response_model=MultiYearResult)
+async def analyze_trends(data: MultiYearInput):
+    try:
+        result = calculate_multi_year_trends(data)
+        return result
+    except Exception as e:
+        logger.error(f"Trend Analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===================== PDF EXPORT =====================
+
+class PDFExportRequest(BaseModel):
+    analysis_type: str  # "working_capital", "banking", "multi_year"
+    data: Dict[str, Any]
+    company_name: str = "Company"
+
+@api_router.post("/export/pdf")
+async def export_pdf(request: PDFExportRequest):
+    """Generate PDF report from analysis results"""
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.colors import HexColor, black, white
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+        
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=20*mm, bottomMargin=20*mm, leftMargin=20*mm, rightMargin=20*mm)
+        
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle', parent=styles['Title'],
+            fontSize=22, spaceAfter=6, textColor=HexColor('#3b82f6'),
+            fontName='Helvetica-Bold'
+        )
+        subtitle_style = ParagraphStyle(
+            'CustomSubtitle', parent=styles['Normal'],
+            fontSize=11, spaceAfter=12, textColor=HexColor('#888899')
+        )
+        heading_style = ParagraphStyle(
+            'CustomHeading', parent=styles['Heading2'],
+            fontSize=14, spaceBefore=16, spaceAfter=8,
+            textColor=HexColor('#3b82f6'), fontName='Helvetica-Bold'
+        )
+        body_style = ParagraphStyle(
+            'CustomBody', parent=styles['Normal'],
+            fontSize=10, spaceAfter=4, textColor=HexColor('#333333'),
+            leading=14
+        )
+        metric_label_style = ParagraphStyle(
+            'MetricLabel', parent=styles['Normal'],
+            fontSize=9, textColor=HexColor('#666666')
+        )
+        metric_value_style = ParagraphStyle(
+            'MetricValue', parent=styles['Normal'],
+            fontSize=12, fontName='Helvetica-Bold', textColor=HexColor('#111111')
+        )
+        
+        elements = []
+        data = request.data
+        
+        # Header
+        elements.append(Paragraph("FINANCIAL ANALYTICS", ParagraphStyle('Brand', parent=styles['Normal'], fontSize=9, textColor=HexColor('#3b82f6'), spaceAfter=2)))
+        
+        if request.analysis_type == "working_capital":
+            elements.append(Paragraph("Working Capital Analysis Report", title_style))
+            elements.append(Paragraph(f"Company: {request.company_name} | Generated: {datetime.utcnow().strftime('%d %B %Y')}", subtitle_style))
+            elements.append(HRFlowable(width="100%", thickness=1, color=HexColor('#e0e0e0'), spaceAfter=12))
+            
+            # Key Metrics Table
+            elements.append(Paragraph("Key Financial Ratios", heading_style))
+            metrics_data = [
+                ["Metric", "Value", "Benchmark", "Status"],
+                ["Current Ratio", f"{data.get('current_ratio', 0):.2f}x", "≥ 1.33x", "Pass" if data.get('current_ratio', 0) >= 1.33 else "Fail"],
+                ["Quick Ratio", f"{data.get('quick_ratio', 0):.2f}x", "≥ 1.00x", "Pass" if data.get('quick_ratio', 0) >= 1.0 else "Fail"],
+                ["Debtor Days", f"{data.get('debtor_days', 0):.0f} days", "< 90 days", "Pass" if data.get('debtor_days', 0) < 90 else "Fail"],
+                ["Creditor Days", f"{data.get('creditor_days', 0):.0f} days", "< 90 days", "Pass" if data.get('creditor_days', 0) < 90 else "Fail"],
+                ["WC Cycle", f"{data.get('wc_cycle', 0):.0f} days", "< 90 days", "Pass" if data.get('wc_cycle', 0) < 90 else "Fail"],
+                ["Gross Margin", f"{data.get('gross_margin', 0):.1f}%", "> 20%", "Pass" if data.get('gross_margin', 0) > 20 else "Review"],
+                ["Net Margin", f"{data.get('net_margin', 0):.1f}%", "> 5%", "Pass" if data.get('net_margin', 0) > 5 else "Review"],
+            ]
+            
+            t = Table(metrics_data, colWidths=[120, 100, 100, 80])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#3b82f6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#e0e0e0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f9fa')]),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(t)
+            elements.append(Spacer(1, 12))
+            
+            # MPBF Section
+            elements.append(Paragraph("MPBF & WC Limit Assessment", heading_style))
+            mpbf_data = [
+                ["Method", "Amount (₹)"],
+                ["MPBF Method I (75% of NWC)", f"₹{data.get('mpbf_method_1', 0):,.0f}"],
+                ["MPBF Method II (75% CA - CL)", f"₹{data.get('mpbf_method_2', 0):,.0f}"],
+                ["20% Turnover Method", f"₹{data.get('turnover_method', 0):,.0f}"],
+                ["Recommended WC Limit", f"₹{data.get('wc_limit', 0):,.0f}"],
+            ]
+            t2 = Table(mpbf_data, colWidths=[250, 150])
+            t2.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#10b981')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('BACKGROUND', (0, -1), (-1, -1), HexColor('#ecfdf5')),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#e0e0e0')),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(t2)
+            elements.append(Spacer(1, 12))
+            
+            # Eligibility
+            eligible = data.get('eligible', False)
+            status_text = "ELIGIBLE FOR WC FINANCING" if eligible else "NOT ELIGIBLE FOR WC FINANCING"
+            status_color = '#10b981' if eligible else '#ef4444'
+            elements.append(Paragraph(f'<font color="{status_color}" size="14"><b>{status_text}</b></font>', body_style))
+            elements.append(Spacer(1, 8))
+            
+            # Assessment
+            elements.append(Paragraph("Assessment Points", heading_style))
+            for point in data.get('assessment', []):
+                elements.append(Paragraph(f"• {point}", body_style))
+            
+            # Recommendation
+            elements.append(Paragraph("Recommendation", heading_style))
+            elements.append(Paragraph(data.get('recommendation', ''), body_style))
+            
+        elif request.analysis_type == "banking":
+            elements.append(Paragraph("Banking Performance Report", title_style))
+            elements.append(Paragraph(f"Company: {request.company_name} | Generated: {datetime.utcnow().strftime('%d %B %Y')}", subtitle_style))
+            elements.append(HRFlowable(width="100%", thickness=1, color=HexColor('#e0e0e0'), spaceAfter=12))
+            
+            # Credit Score
+            grade = data.get('grade', 'N/A')
+            score = data.get('credit_score', 0)
+            risk = data.get('risk_level', 'N/A')
+            elements.append(Paragraph(f"Credit Score: {score}/100 | Grade: {grade} | Risk: {risk}", ParagraphStyle('Score', parent=styles['Normal'], fontSize=14, fontName='Helvetica-Bold', textColor=HexColor('#3b82f6'), spaceAfter=12)))
+            
+            # Component Scores
+            elements.append(Paragraph("Component Score Breakdown", heading_style))
+            score_data = [
+                ["Component", "Score", "Weight", "Weighted"],
+                ["Liquidity", f"{data.get('liquidity_score', 0)}%", "15%", f"{data.get('liquidity_score', 0) * 0.15:.1f}"],
+                ["Cash Flow", f"{data.get('cash_flow_score', 0)}%", "25%", f"{data.get('cash_flow_score', 0) * 0.25:.1f}"],
+                ["Credit", f"{data.get('credit_score_component', 0)}%", "25%", f"{data.get('credit_score_component', 0) * 0.25:.1f}"],
+                ["Repayment", f"{data.get('repayment_score', 0)}%", "20%", f"{data.get('repayment_score', 0) * 0.20:.1f}"],
+                ["Stability", f"{data.get('stability_score', 0)}%", "15%", f"{data.get('stability_score', 0) * 0.15:.1f}"],
+            ]
+            t = Table(score_data, colWidths=[120, 80, 80, 80])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#10b981')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#e0e0e0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f9fa')]),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(t)
+            elements.append(Spacer(1, 12))
+            
+            # Status Grid
+            elements.append(Paragraph("Status Assessment", heading_style))
+            status_data = [
+                ["Area", "Status"],
+                ["Working Capital", data.get('working_capital_status', 'N/A')],
+                ["Liquidity", data.get('liquidity_status', 'N/A')],
+                ["Cash Flow", data.get('cash_flow_status', 'N/A')],
+                ["Creditworthiness", data.get('creditworthiness_status', 'N/A')],
+                ["Repayment", data.get('repayment_status', 'N/A')],
+                ["Stability", data.get('stability_status', 'N/A')],
+                ["Behavior", data.get('behavior_status', 'N/A')],
+            ]
+            t2 = Table(status_data, colWidths=[200, 200])
+            t2.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#3b82f6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#e0e0e0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f9fa')]),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(t2)
+            elements.append(Spacer(1, 12))
+            
+            # Strengths & Concerns
+            elements.append(Paragraph("Strengths", heading_style))
+            for s in data.get('strengths', []):
+                elements.append(Paragraph(f"✓ {s}", body_style))
+            
+            elements.append(Paragraph("Concerns", heading_style))
+            for c in data.get('concerns', []):
+                elements.append(Paragraph(f"⚠ {c}", body_style))
+            
+            elements.append(Paragraph("Recommendation", heading_style))
+            elements.append(Paragraph(data.get('recommendation', ''), body_style))
+            
+        elif request.analysis_type == "multi_year":
+            elements.append(Paragraph("Multi-Year Trend Analysis Report", title_style))
+            elements.append(Paragraph(f"Company: {request.company_name} | Generated: {datetime.utcnow().strftime('%d %B %Y')}", subtitle_style))
+            elements.append(HRFlowable(width="100%", thickness=1, color=HexColor('#e0e0e0'), spaceAfter=12))
+            
+            years = data.get('years', [])
+            trends = data.get('trends', {})
+            
+            if years and trends:
+                elements.append(Paragraph("Financial Trends", heading_style))
+                
+                header_row = ["Metric"] + [f"FY {y}" for y in years]
+                trend_rows = [header_row]
+                
+                if 'revenue' in trends:
+                    trend_rows.append(["Revenue"] + [f"₹{v:,.0f}" for v in trends['revenue']])
+                if 'net_profit' in trends:
+                    trend_rows.append(["Net Profit"] + [f"₹{v:,.0f}" for v in trends['net_profit']])
+                if 'current_ratio' in trends:
+                    trend_rows.append(["Current Ratio"] + [f"{v:.2f}x" for v in trends['current_ratio']])
+                if 'net_working_capital' in trends:
+                    trend_rows.append(["Net WC"] + [f"₹{v:,.0f}" for v in trends['net_working_capital']])
+                if 'gross_margin' in trends:
+                    trend_rows.append(["Gross Margin"] + [f"{v:.1f}%" for v in trends['gross_margin']])
+                if 'net_margin' in trends:
+                    trend_rows.append(["Net Margin"] + [f"{v:.1f}%" for v in trends['net_margin']])
+                
+                col_width = 400 // (len(years) + 1)
+                t = Table(trend_rows, colWidths=[120] + [col_width] * len(years))
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), HexColor('#8b5cf6')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#e0e0e0')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#f8f9fa')]),
+                    ('TOPPADDING', (0, 0), (-1, -1), 6),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ]))
+                elements.append(t)
+                elements.append(Spacer(1, 12))
+            
+            # Insights
+            elements.append(Paragraph("Key Insights", heading_style))
+            for insight in data.get('insights', []):
+                elements.append(Paragraph(f"• {insight}", body_style))
+            
+            elements.append(Paragraph("Recommendation", heading_style))
+            elements.append(Paragraph(data.get('recommendation', ''), body_style))
+        
+        # Footer
+        elements.append(Spacer(1, 24))
+        elements.append(HRFlowable(width="100%", thickness=0.5, color=HexColor('#cccccc'), spaceAfter=6))
+        elements.append(Paragraph("Generated by Financial Analytics Platform", ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=HexColor('#999999'), alignment=TA_CENTER)))
+        
+        doc.build(elements)
+        buffer.seek(0)
+        
+        filename = f"{request.company_name}_{request.analysis_type}_report.pdf"
+        
+        return StreamingResponse(
+            buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+        
+    except Exception as e:
+        logger.error(f"PDF export error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating PDF: {str(e)}")
+
+# ===================== CASES CRUD =====================
+
+@api_router.post("/cases", response_model=Case)
+async def save_case(case: Case):
+    try:
+        case_dict = case.dict()
+        case_dict['timestamp'] = datetime.utcnow()
+        await db.cases.insert_one(case_dict)
+        return case
+    except Exception as e:
+        logger.error(f"Save case error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/cases", response_model=List[Case])
+async def get_cases():
+    try:
+        cases = await db.cases.find().sort("timestamp", -1).to_list(100)
+        return [Case(**c) for c in cases]
+    except Exception as e:
+        logger.error(f"Get cases error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/cases/{case_id}", response_model=Case)
+async def get_case(case_id: str):
+    try:
+        case = await db.cases.find_one({"id": case_id})
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        return Case(**case)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get case error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/cases/{case_id}")
+async def delete_case(case_id: str):
+    try:
+        result = await db.cases.delete_one({"id": case_id})
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Case not found")
+        return {"message": "Case deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete case error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Dashboard Stats
+@api_router.get("/dashboard/stats")
+async def get_dashboard_stats():
+    try:
+        total_cases = await db.cases.count_documents({})
+        wc_count = await db.cases.count_documents({"analysis_type": "working_capital"})
+        banking_count = await db.cases.count_documents({"analysis_type": "banking"})
+        trend_count = await db.cases.count_documents({"analysis_type": "multi_year"})
+        
+        recent_cases = await db.cases.find().sort("timestamp", -1).limit(5).to_list(5)
+        
+        return {
+            "total_cases": total_cases,
+            "wc_analysis_count": wc_count,
+            "banking_count": banking_count,
+            "multi_year_count": trend_count,
+            "recent_cases": [Case(**c).dict() for c in recent_cases]
+        }
+    except Exception as e:
+        logger.error(f"Dashboard stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===================== HEALTH CHECK =====================
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for deployment validation"""
+    try:
+        # Check if database is accessible (optional for health check)
+        if db:
+            await db.command("ping")
+            db_status = "connected"
+        else:
+            db_status = "not initialized"
+        
+        return {
+            "status": "healthy",
+            "database": db_status,
+            "service": "Financial Analytics API",
+            "version": "1.0.0",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.warning(f"Health check - DB ping failed: {e}")
+        return {
+            "status": "degraded",
+            "database": "unavailable",
+            "service": "Financial Analytics API",
+            "version": "1.0.0",
+            "timestamp": datetime.utcnow().isoformat(),
+            "warning": str(e)
+        }
+
+# Include the router in the main app
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    if client:
+        client.close()
