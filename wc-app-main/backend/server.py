@@ -19,11 +19,19 @@ import io
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+# Configure logging FIRST (before any logger usage)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # MongoDB connection - with fallback for missing URL
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 try:
     client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=5000)
     db = client[os.environ.get('DB_NAME', 'financial_analytics')]
+    logger.info("MongoDB connection initialized successfully")
 except Exception as e:
     logger.warning(f"MongoDB connection failed initially: {e}. Will retry on first request.")
     client = None
@@ -37,13 +45,6 @@ app = FastAPI(title="Financial Analytics API")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 # ===================== MODELS =====================
 
