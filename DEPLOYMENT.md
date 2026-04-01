@@ -2,7 +2,7 @@
 
 This guide covers deploying the **Financial Analytics** app:
 - **Backend** (FastAPI + MongoDB) → [Railway](https://railway.app)
-- **Frontend** (React Native / Expo) → Expo EAS Build + App Stores
+- **Frontend** (React Native / Expo) → [Expo EAS Build](https://docs.expo.dev/build/introduction/) + App Stores
 
 ---
 

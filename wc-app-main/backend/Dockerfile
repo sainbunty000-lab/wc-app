@@ -30,7 +30,7 @@ EXPOSE 8000
 # Health check uses the default port; Railway's load-balancer health check
 # uses the /health path configured in railway.json instead.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
+    CMD sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:$PORT/health')\" || exit 1"
 
 # Fallback CMD for plain `docker run` (Railway uses Procfile / startCommand)
 CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT} --workers 4"]

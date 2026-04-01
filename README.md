@@ -26,9 +26,9 @@ cd wc-app
 docker-compose up --build
 ```
 
-- Backend API → <http://localhost:8001>
-- API docs    → <http://localhost:8001/docs>
-- Health check → <http://localhost:8001/health>
+- Backend API → [http://localhost:8001](http://localhost:8001)
+- API docs    → [http://localhost:8001/docs](http://localhost:8001/docs)
+- Health check → [http://localhost:8001/health](http://localhost:8001/health)
 
 ### 3. Configure the frontend
 
