@@ -21,23 +21,24 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ./wc-app-main/backend
       dockerfile: Dockerfile
     container_name: wc_app_backend
     ports:
-      - "8000:8000"
+      - "8001:8001"
     environment:
       MONGO_URL: mongodb://mongodb:27017
       DB_NAME: financial_analytics
       LOG_LEVEL: INFO
+      PORT: 8001
     depends_on:
       mongodb:
         condition: service_healthy
     volumes:
-      - ./backend:/app
+      - ./wc-app-main/backend:/app
     networks:
       - wc_app_network
-    command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn server:app --host 0.0.0.0 --port 8001 --reload
 
 volumes:
   mongodb_data:

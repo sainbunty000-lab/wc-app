@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
@@ -21,12 +21,16 @@ COPY . .
 # Set PATH for pip's --user install
 ENV PATH=/root/.local/bin:$PATH
 
-# Expose port
+# Default port — Railway overrides $PORT at runtime via Procfile/startCommand
+ENV PORT=8000
+
+# Expose default port (Railway ignores EXPOSE; the actual port comes from $PORT)
 EXPOSE 8000
 
-# Add health check
+# Health check uses the default port; Railway's load-balancer health check
+# uses the /health path configured in railway.json instead.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
 
-# Start server with production settings
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Fallback CMD for plain `docker run` (Railway uses Procfile / startCommand)
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT} --workers 4"]

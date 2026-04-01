@@ -1,0 +1,12 @@
+# nixpacks.toml — Railway build configuration for the FastAPI backend.
+# Used when Railway's "Root Directory" is set to "wc-app-main/backend".
+# Reference: https://nixpacks.com/docs/configuration/file
+
+[phases.setup]
+nixPkgs = ["python311", "tesseract"]   # tesseract needed by pytesseract
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "uvicorn server:app --host 0.0.0.0 --port $PORT --workers 4"

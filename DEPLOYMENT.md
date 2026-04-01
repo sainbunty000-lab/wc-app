@@ -1,273 +1,249 @@
 # Deployment Guide
 
-This guide covers deploying the Financial Analytics app on Railway (backend) and Expo (frontend).
+This guide covers deploying the **Financial Analytics** app:
+- **Backend** (FastAPI + MongoDB) → [Railway](https://railway.app)
+- **Frontend** (React Native / Expo) → Expo EAS Build + App Stores
 
-## Prerequisites
+---
 
-- [Railway CLI](https://docs.railway.app/cli/installation) installed and authenticated
-- [Expo CLI](https://docs.expo.dev/get-started/installation/) installed
-- [Docker](https://www.docker.com/products/docker-desktop) for local testing
-- MongoDB database (Railway will provide MongoDB plugin)
+## Repository Layout
+
+```
+wc-app/
+├── Procfile                   ← Root-level Procfile (Railway fallback from repo root)
+├── railway.json               ← Railway build/deploy config
+├── docker-compose.yml         ← Local development only (MongoDB + backend)
+├── wc-app-main/
+│   ├── backend/               ← FastAPI app (Railway deploys this)
+│   │   ├── server.py
+│   │   ├── requirements.txt
+│   │   ├── Dockerfile
+│   │   ├── Procfile           ← Used when Railway root-dir = wc-app-main/backend
+│   │   ├── nixpacks.toml      ← Nixpacks build config (Railway auto-detect)
+│   │   └── .env.example       ← Copy to .env for local dev
+│   └── frontend/              ← Expo app
+│       ├── app.json
+│       ├── eas.json
+│       └── .env.example       ← Copy to .env for local dev
+```
+
+---
 
 ## Backend Deployment (Railway)
 
-### 1. Prepare Your Backend
+### Prerequisites
+
+- [Railway account](https://railway.app) and [Railway CLI](https://docs.railway.app/develop/cli)
+- MongoDB — use the Railway MongoDB plugin (free tier available)
+
+### Option A — GitHub Integration (Recommended)
+
+1. Push your code to GitHub.
+2. In the Railway dashboard → **New Project → Deploy from GitHub repo**.
+3. Select your repository.
+4. **IMPORTANT**: In project settings → **Root Directory** → set to `wc-app-main/backend`.
+   Railway will then use `wc-app-main/backend/Procfile` and `nixpacks.toml` directly.
+5. Add the **MongoDB** plugin from the Railway marketplace.
+   Railway sets `MONGO_URL` automatically when the plugin is attached.
+6. Set the remaining environment variables (see below).
+7. Deploy — Railway will auto-detect Python via nixpacks and start uvicorn.
+
+### Option B — Railway CLI from Repo Root
 
 ```bash
-cd backend
-# The .env file is configured with defaults
-# Railway will override MONGO_URL via environment variables
-```
-
-### 2. Deploy to Railway
-
-#### Option A: Using Railway CLI (Recommended)
-
-```bash
-# Log in to Railway
+# Authenticate
 railway login
 
-# Initialize Railway project
-railway init
+# Create or link project
+railway init          # new project
+# OR
+railway link          # existing project
 
-# Link to project
-railway link
-
-# Deploy
+# Deploy (uses root Procfile + railway.json)
 railway up
 
-# Check deployment status
-railway status
-
-# View logs
+# Tail logs
 railway logs
+
+# Open in browser
+railway open
 ```
 
-#### Option B: GitHub Integration (Easiest)
+The root `Procfile` and `railway.json` are already configured to navigate into
+`wc-app-main/backend` and start uvicorn.
 
-1. Push your code to GitHub
-2. Go to [railway.app](https://railway.app)
-3. Create new project → GitHub repo
-4. Select the repo
-5. Configure environment:
-   - Railway auto-detects Python project
-   - Add MongoDB plugin from Railway marketplace
-   - Set `MONGO_URL` to the MongoDB connection string
-   - Set other env vars: `DB_NAME=financial_analytics`, `LOG_LEVEL=INFO`
+### Environment Variables (Railway Dashboard)
 
-### 3. Configure Environment Variables
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MONGO_URL` | ✅ | Set automatically by Railway MongoDB plugin |
+| `DB_NAME` | ✅ | `financial_analytics` |
+| `LOG_LEVEL` | ✅ | `INFO` (or `DEBUG` during troubleshooting) |
+| `EMERGENT_LLM_KEY` | Optional | Gemini Vision API key for AI document parsing |
+| `CORS_ORIGINS` | Optional | Restrict in production, e.g. `["https://your-domain.com"]` |
 
-In Railway dashboard:
+> **Never commit secrets.** Use Railway's dashboard or `railway variables set KEY=VALUE`.
 
-```
-MONGO_URL=mongodb+srv://username:password@cluster.mongodb.net/financial_analytics
-DB_NAME=financial_analytics
-EMERGENT_LLM_KEY=your_gemini_api_key (optional)
-LOG_LEVEL=INFO
-```
-
-### 4. Test Backend
-
-Once deployed:
+### Verify Backend Health
 
 ```bash
-# Health check
-curl https://your-railway-url.railway.app/health
+# Replace with your Railway public URL
+curl https://your-app.up.railway.app/health
 
-# Should return: {"status": "healthy", "database": "connected", ...}
+# Expected response
+# {"status": "healthy", "timestamp": "...", "database": "connected", ...}
+
+# The /api/health route is also available:
+curl https://your-app.up.railway.app/api/health
 ```
 
 ---
 
 ## Frontend Deployment (Expo)
 
-### 1. Setup Expo Project
+### 1. Configure the Backend URL
 
 ```bash
-cd frontend
+cd wc-app-main/frontend
 
-# Install dependencies
+# Copy the example and fill in your Railway URL
+cp .env.example .env
+# Edit .env:
+#   EXPO_PUBLIC_BACKEND_URL=https://your-app.up.railway.app
+```
+
+The API client (`src/api/index.ts`) reads `EXPO_PUBLIC_BACKEND_URL` — no code
+changes are needed once the env var is set.
+
+### 2. Install Dependencies
+
+```bash
+cd wc-app-main/frontend
 npm install
-# or
-yarn install
+```
 
-# Verify the app runs locally
+### 3. Run Locally Against Deployed Backend
+
+```bash
 npx expo start
 ```
 
-### 2. Create Expo Account
+### 4. EAS Build (Production Builds)
 
 ```bash
-# If you don't have an Expo account
-npx eas-cli register
+# Install EAS CLI
+npm install -g eas-cli
 
-# Log in
-npx eas-cli login
+# Log in / create account
+eas login
+
+# Configure project (first time)
+eas build:configure
+
+# Build for Android (APK for testing)
+eas build --platform android --profile preview2
+
+# Build for iOS (internal distribution)
+eas build --platform ios --profile preview
+
+# Production builds
+eas build --platform android --profile production
+eas build --platform ios    --profile production
 ```
 
-### 3. Build for Android (Recommended to Start)
+### 5. Submit to Stores
 
 ```bash
-# Configure EAS
-npx eas-cli configure
+# Google Play
+eas submit --platform android --latest --track internal
 
-# Create debug build
-npx eas-cli build --platform android --local
-
-# Or submit to Expo cloud (slower but more reliable)
-npx eas-cli build --platform android
-```
-
-### 4. Build for iOS
-
-```bash
-# Requires Apple Developer account ($99/year)
-
-# Create release build
-npx eas-cli build --platform ios --type release
-
-# Or use internal distribution for testing
-npx eas-cli build --platform ios --type preview
-```
-
-### 5. Publish to Stores
-
-#### Google Play Store
-
-```bash
-# Create app signing credentials
-npx eas-cli credentials --platform android
-
-# Submit to Play Store
-npx eas-cli submit --platform android \
-  --latest \
-  --track internal
-```
-
-#### Apple App Store
-
-```bash
-# Create app signing credentials (expensive - requires Apple Developer account)
-npx eas-cli credentials --platform ios
-
-# Submit to App Store
-npx eas-cli submit --platform ios \
-  --latest
-```
-
----
-
-## Environment Configuration
-
-### Backend (.env)
-
-```ini
-# MongoDB
-MONGO_URL=mongodb+srv://user:pass@host/db
-DB_NAME=financial_analytics
-
-# API Configuration
-API_TITLE=Financial Analytics API
-LOG_LEVEL=INFO
-
-# Security
-CORS_ORIGINS=["http://localhost:3000","https://yourdomain.com"]
-
-# LLM (Optional)
-EMERGENT_LLM_KEY=your_key
-```
-
-### Frontend (.env)
-
-```ini
-# Update based on your backend URL
-EXPO_PUBLIC_API_URL=https://your-railway-url.railway.app
+# Apple App Store
+eas submit --platform ios --latest
 ```
 
 ---
 
 ## Local Development with Docker Compose
 
-For local testing with MongoDB:
+Spins up MongoDB + backend together — no Railway account needed.
 
 ```bash
-# Start services (MongoDB + Backend)
+# From repo root
 docker-compose up --build
 
-# Backend will be available at http://localhost:8000
-# MongoDB at mongodb://localhost:27017
+# Backend →  http://localhost:8001
+# MongoDB → mongodb://localhost:27017
 
-# Stop services
+# Stop
 docker-compose down
+```
+
+Copy `.env.example` to `.env` inside `wc-app-main/backend/` and adjust as needed.
+
+---
+
+## Troubleshooting
+
+### Backend: `Connection refused` / MongoDB error
+
+- Verify `MONGO_URL` is set in Railway dashboard.
+- Check Railway logs: `railway logs` or dashboard → Deployments → Logs.
+- The server handles a missing DB connection gracefully — only data endpoints fail.
+
+### Backend: 500 on startup
+
+- Confirm Railway root directory is set to `wc-app-main/backend`.
+- Check that `requirements.txt` is present and the build log shows pip install succeeded.
+
+### Frontend: Cannot reach API
+
+- Confirm `EXPO_PUBLIC_BACKEND_URL` in `wc-app-main/frontend/.env` points to
+  the live Railway URL (no trailing slash).
+- Verify CORS — the backend currently allows `*`. For production, restrict to
+  your frontend origin.
+
+### Docker build fails locally
+
+```bash
+docker build -t wc-app:latest wc-app-main/backend/
+docker run -e MONGO_URL=mongodb://host.docker.internal:27017 -p 8001:8000 wc-app:latest
 ```
 
 ---
 
-##  Troubleshooting
+## Key API Endpoints
 
-### Backend Won't Start
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check (Railway load-balancer target) |
+| GET | `/api/health` | Health check (includes AI status) |
+| POST | `/api/analysis/wc` | Working-capital analysis |
+| POST | `/api/analysis/banking` | Banking analysis |
+| POST | `/api/analysis/trend` | Multi-year trend analysis |
+| GET | `/api/cases` | List saved cases |
+| POST | `/api/cases` | Save a case |
+| GET | `/api/dashboard/stats` | Dashboard statistics |
+| POST | `/api/parse/upload` | AI document parsing (requires `EMERGENT_LLM_KEY`) |
+| POST | `/api/export/pdf` | PDF report export |
 
-**Error: "KeyError: 'MONGO_URL'"**
-- Solution: Ensure `.env` file exists in `backend/` directory
-- Or set environment variables in Railway dashboard
-
-**Error: "Connection refused"**
-- MongoDB not available
-- Check MongoDB service is running
-- For Railway: verify MongoDB plugin is attached
-
-### Frontend Build Fails
-
-**Error: "Module not found"**
-- Run `npm install` or `yarn install`
-- Clear cache: `npm cache clean --force`
-
-**Error: "eas-cli not found"**
-- Install globally: `npm install -g eas-cli`
-- Or use: `npx eas-cli`
-
-### API Connection Issues
-
-**Frontend can't reach backend**
-- Verify `EXPO_PUBLIC_API_URL` in `.env`
-- Check CORS settings in backend
-- Use Railway public URL, not localhost
-
----
-
-## Monitoring
-
-### Railway
-- Real-time logs in dashboard
-- Metrics: CPU, memory, network
-- Alerts configurable
-
-### Expo
-- Rollout analytics
-- Crash reports via Sentry (optional integration)
-- Release notes in Dashboard
+FastAPI auto-generates interactive docs at `/docs` and `/redoc`.
 
 ---
 
 ## Cost Estimates
 
-- **Railway**: $5-20/month (free tier available)
-- **Expo EAS**: Free builds + $99/year for advanced features
-- **MongoDB**: $57+/month (Atlas basic tier)
-- **Apple Developer**: $99/year (for iOS distribution)
-- **Google Play**: $25 one-time (for Android distribution)
+| Service | Cost |
+|---------|------|
+| Railway Hobby plan | ~$5/month |
+| Railway MongoDB plugin | ~$5/month (512 MB) |
+| Expo EAS Free tier | 30 builds/month free |
+| Apple Developer | $99/year (iOS only) |
+| Google Play | $25 one-time (Android only) |
 
 ---
 
-## Next Steps
-
-1. Update API endpoint in frontend `.env` after backend deployment
-2. Test health endpoint: `/health`
-3. Run sample API calls
-4. Build and test mobile apps locally before cloud submission
-5. Set up monitoring and error tracking
-
 For more details:
-- [Railway Documentation](https://docs.railway.app)
-- [Expo Documentation](https://docs.expo.dev)
-- [EAS Build Documentation](https://docs.expo.dev/eas-update/introduction/)
+- [Railway Docs](https://docs.railway.app)
+- [Expo EAS Build](https://docs.expo.dev/build/introduction/)
+- [FastAPI Deployment](https://fastapi.tiangolo.com/deployment/)
+
