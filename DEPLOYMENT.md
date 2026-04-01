@@ -140,8 +140,8 @@ eas login
 # Configure project (first time)
 eas build:configure
 
-# Build for Android (APK for testing)
-eas build --platform android --profile preview2
+# Build for Android (internal distribution)
+eas build --platform android --profile preview
 
 # Build for iOS (internal distribution)
 eas build --platform ios --profile preview
