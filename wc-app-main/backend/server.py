@@ -171,9 +171,7 @@ class MultiYearResult(BaseModel):
     analysis_type: str = "multi_year"
     growth_trends: Optional[Dict[str, Any]] = None
     patterns: Optional[Dict[str, str]] = None
-    growth_score: Optional[int] = None
-    trend_label: Optional[str] = None
-    trend_analysis: Optional[Dict[str, Any]] = None
+    ai_analysis: Optional[Dict[str, Any]] = None
 
 class Case(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -196,6 +194,7 @@ class FinancialAnalysisResult(BaseModel):
     normalized_data: Dict[str, Any]
     metrics: Dict[str, Any]
     analysis: Dict[str, Any]
+    confidence: Optional[float] = None
     analysis_type: str = "financial_analysis"
 
 # ===================== HELPER FUNCTIONS =====================
@@ -1036,6 +1035,20 @@ def _rule_based_insights(normalized_data: Dict[str, Any], metrics: Dict[str, Any
         f"{'Profitability is satisfactory.' if margin_ok else 'Profitability requires improvement.'}"
     )
 
+    # Confidence based on how many metrics are available and pass thresholds.
+    # Baseline: 0.50 (50%) when no signals are present.
+    # Each available metric adds 0.07 (7%), capped implicitly by the max of 5 signals → 0.85.
+    _CONFIDENCE_BASELINE = 0.50
+    _CONFIDENCE_PER_SIGNAL = 0.07
+    confidence_signals = sum([
+        current_ratio is not None,
+        quick_ratio is not None,
+        net_margin is not None,
+        gross_margin is not None,
+        working_capital is not None,
+    ])
+    confidence = round(_CONFIDENCE_BASELINE + confidence_signals * _CONFIDENCE_PER_SIGNAL, 2)
+
     return {
         "eligibility_status": eligibility_status,
         "summary": summary,
@@ -1043,6 +1056,7 @@ def _rule_based_insights(normalized_data: Dict[str, Any], metrics: Dict[str, Any
         "strengths": strengths or ["Financial data available for analysis."],
         "risks": risks or ["No major risks identified from available data."],
         "recommendations": recommendations or ["Continue monitoring key financial metrics regularly."],
+        "confidence": confidence,
     }
 
 
@@ -1070,33 +1084,64 @@ async def generate_financial_insights(
     }
     clean_metrics = {k: v for k, v in metrics.items() if v is not None}
 
-    prompt = f"""Analyze this company's financial data and provide a professional financial assessment.
+    prompt = f"""You are a strict financial analysis engine. Analyze ONLY the data provided below.
+Do NOT hallucinate or infer values not present in the data.
+Do NOT include any text outside the JSON object.
+
+=== FEW-SHOT EXAMPLES ===
+
+Example 1 — Strong company:
+Input metrics: current_ratio=2.1, quick_ratio=1.8, net_margin=12.5, debt_to_equity=0.4, working_capital=500000
+Output:
+{{
+  "eligibility_status": "Eligible",
+  "summary": "The company demonstrates strong liquidity with a current ratio of 2.1x and healthy net margins of 12.5%. Working capital is positive at ₹5,00,000, indicating sound short-term financial management. Low leverage ratio of 0.4x reflects conservative financing.",
+  "insights": ["Strong liquidity position", "Healthy profit margins", "Low debt burden"],
+  "strengths": ["Current ratio 2.1x exceeds 1.33x benchmark", "Net margin 12.5% reflects strong profitability"],
+  "risks": ["No significant risks identified from available data"],
+  "recommendations": ["Maintain current liquidity levels", "Consider strategic expansion given healthy margins"],
+  "confidence": 0.88
+}}
+
+Example 2 — Weak company:
+Input metrics: current_ratio=0.8, quick_ratio=0.6, net_margin=-3.2, debt_to_equity=3.1, working_capital=-200000
+Output:
+{{
+  "eligibility_status": "Not Eligible",
+  "summary": "The company faces significant financial stress with a current ratio of 0.8x, below the minimum 1.33x benchmark. Negative net margins of -3.2% indicate operating losses, and high leverage of 3.1x amplifies financial risk. Immediate corrective action is required.",
+  "insights": ["Liquidity below minimum benchmark", "Operating at a loss", "High leverage risk"],
+  "strengths": ["No major strengths identified from available data"],
+  "risks": ["Current ratio 0.8x below 1.33x benchmark", "Negative net margin indicates losses", "High debt-to-equity of 3.1x"],
+  "recommendations": ["Improve current asset position urgently", "Review cost structure to restore profitability", "Reduce debt exposure"],
+  "confidence": 0.82
+}}
+
+=== ACTUAL ANALYSIS ===
 
 Company: {company_name}
 
-Normalized Financial Data:
+Normalized Financial Data (use ONLY these values):
 {json.dumps(clean_normalized, indent=2)}
 
-Calculated Metrics:
+Calculated Metrics (use ONLY these values):
 {json.dumps(clean_metrics, indent=2)}
 
-Evaluate:
+Evaluate based strictly on the data above:
 1. Liquidity position and working capital adequacy
 2. Profitability and margin quality
 3. Financial risk and debt levels
 4. Overall financial health and eligibility for financing
 
-Return ONLY a valid JSON object with this exact structure:
+Return ONLY a valid JSON object with this exact structure (no markdown, no extra text):
 {{
   "eligibility_status": "Eligible" or "Conditional" or "Not Eligible",
-  "summary": "Professional 2-3 sentence summary of the company's financial position",
-  "insights": ["key insight 1", "key insight 2", "key insight 3"],
-  "strengths": ["financial strength 1", "financial strength 2"],
-  "risks": ["financial risk 1", "financial risk 2"],
-  "recommendations": ["recommendation 1", "recommendation 2"]
-}}
-
-Return only the JSON object, no explanations or markdown."""
+  "summary": "Professional 3-5 sentence summary using ONLY the provided data",
+  "insights": ["specific insight from data 1", "specific insight from data 2", "specific insight from data 3"],
+  "strengths": ["specific strength from data 1", "specific strength from data 2"],
+  "risks": ["specific risk from data 1", "specific risk from data 2"],
+  "recommendations": ["actionable recommendation 1", "actionable recommendation 2"],
+  "confidence": 0.0 to 1.0 based on data completeness and signal clarity
+}}"""
 
     try:
         if provider == "gemini":
@@ -1235,6 +1280,36 @@ async def analyze_banking(data: BankingInput):
 async def analyze_trends(data: MultiYearInput):
     try:
         result = calculate_multi_year_trends(data)
+
+        # Generate AI insights for the multi-year data using the latest year's metrics.
+        # Merge balance sheet and P&L dicts explicitly to avoid silent key overwrites.
+        if result.growth_trends:
+            latest_year = data.years_data[-1]
+            bs_dict = latest_year.balance_sheet.dict()
+            pl_dict = latest_year.profit_loss.dict()
+            # Report any key overlap to the logger so it is visible in logs
+            overlap = set(bs_dict) & set(pl_dict)
+            if overlap:
+                logger.warning("Balance sheet / P&L key overlap in multi-year AI merge: %s", overlap)
+            combined_raw: Dict[str, Any] = {**bs_dict, **pl_dict}
+            normalized = normalize_financial_data(combined_raw)
+            latest_metrics = calculate_metrics(normalized)
+            # Enrich metrics with growth context
+            patterns = result.growth_trends.get("patterns", {})
+            cagr = result.growth_trends.get("cagr", {})
+            enriched_metrics = {
+                **latest_metrics,
+                "revenue_pattern": patterns.get("revenue"),
+                "profit_pattern": patterns.get("net_profit"),
+                "revenue_cagr_pct": cagr.get("revenue"),
+                "profit_cagr_pct": cagr.get("net_profit"),
+                "years_analyzed": len(data.years_data),
+            }
+            ai_analysis = await generate_financial_insights(
+                normalized, enriched_metrics, company_name=data.company_name
+            )
+            result.ai_analysis = ai_analysis
+
         return result
     except Exception as e:
         logger.error(f"Trend Analysis error: {e}")
@@ -1259,16 +1334,19 @@ async def analyze_financial(data: FlexibleFinancialInput):
             normalized_data, metrics, company_name=data.company_name
         )
 
-        # 4. Build result
+        # 4. Build result — extract confidence from analysis without mutating the dict
         clean_normalized = {
             k: v for k, v in normalized_data.items() if not k.startswith("_")
         }
+        confidence = analysis.get("confidence")
+        analysis_without_confidence = {k: v for k, v in analysis.items() if k != "confidence"}
         result = FinancialAnalysisResult(
             company_name=data.company_name,
             year=data.year,
             normalized_data=clean_normalized,
             metrics=metrics,
-            analysis=analysis,
+            analysis=analysis_without_confidence,
+            confidence=confidence,
         )
 
         # 5. Store in database (non-fatal if DB unavailable)

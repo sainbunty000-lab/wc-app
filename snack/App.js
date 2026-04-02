@@ -373,12 +373,13 @@ const hc = StyleSheet.create({
 
 // ── Eligibility Badge ─────────────────────────────────────────────────────────
 
-function EligibilityBadge({ status, animStyle }) {
+function EligibilityBadge({ status, confidence, animStyle }) {
   const isEligible = status === 'Eligible';
-  const bg         = isEligible ? '#E8F5E9' : '#FFEBEE';
-  const border     = isEligible ? '#A5D6A7' : '#FFCDD2';
-  const textColor  = isEligible ? colors.green : colors.red;
-  const icon       = isEligible ? 'checkmark-circle' : 'close-circle';
+  const isConditional = status === 'Conditional' || status === 'CONDITIONALLY ELIGIBLE';
+  const bg         = isEligible ? '#E8F5E9' : isConditional ? '#FFF8E1' : '#FFEBEE';
+  const border     = isEligible ? '#A5D6A7' : isConditional ? '#FFD54F' : '#FFCDD2';
+  const textColor  = isEligible ? colors.green : isConditional ? colors.yellow : colors.red;
+  const icon       = isEligible ? 'checkmark-circle' : isConditional ? 'alert-circle' : 'close-circle';
 
   return (
     <Animated.View style={[eb.wrap, animStyle]}>
@@ -387,6 +388,11 @@ function EligibilityBadge({ status, animStyle }) {
         <Text style={[eb.text, { color: textColor }]}>{status ?? 'Unknown'}</Text>
       </View>
       <Text style={eb.sub}>Eligibility Status</Text>
+      {confidence != null && (
+        <Text style={[eb.confidence, { color: textColor }]}>
+          Confidence: {Math.round(confidence * 100)}%
+        </Text>
+      )}
     </Animated.View>
   );
 }
@@ -406,8 +412,9 @@ const eb = StyleSheet.create({
       android: { elevation: 4 },
     }),
   },
-  text:  { fontSize: 22, fontWeight: '800', letterSpacing: 0.5 },
-  sub:   { color: colors.textMuted, fontSize: 12, fontWeight: '500', marginTop: 8, letterSpacing: 0.4 },
+  text:       { fontSize: 22, fontWeight: '800', letterSpacing: 0.5 },
+  sub:        { color: colors.textMuted, fontSize: 12, fontWeight: '500', marginTop: 8, letterSpacing: 0.4 },
+  confidence: { fontSize: 12, fontWeight: '700', marginTop: 4 },
 });
 
 // ── Summary Card ──────────────────────────────────────────────────────────────
@@ -469,13 +476,21 @@ function AnalysisResultCard({ analysis }) {
   const chip0Anim   = useFadeSlideIn(320);
   const chip1Anim   = useFadeSlideIn(400);
   const chip2Anim   = useFadeSlideIn(480);
+  const riskAnim    = useFadeSlideIn(560);
   const chipAnims   = [chip0Anim, chip1Anim, chip2Anim];
 
-  const insights = extractInsights(analysis?.summary);
+  const insights  = extractInsights(analysis?.summary);
+  const risks     = analysis?.risks ?? [];
+  const strengths = analysis?.strengths ?? [];
+  const confidence = analysis?.confidence != null ? analysis.confidence : null;
 
   return (
     <View>
-      <EligibilityBadge status={analysis?.eligibility_status} animStyle={badgeAnim} />
+      <EligibilityBadge
+        status={analysis?.eligibility_status}
+        confidence={confidence}
+        animStyle={badgeAnim}
+      />
       <SummaryCard summary={analysis?.summary} animStyle={summaryAnim} />
       {insights.length > 0 && (
         <>
@@ -493,9 +508,54 @@ function AnalysisResultCard({ analysis }) {
           </View>
         </>
       )}
+      {risks.length > 0 && risks[0] !== 'No major risks identified from available data.' && (
+        <Animated.View style={[ra.card, riskAnim]}>
+          <View style={ra.titleRow}>
+            <Ionicons name="warning-outline" size={16} color={colors.red} />
+            <Text style={ra.title}>Risk Alerts</Text>
+          </View>
+          {risks.map((r, i) => (
+            <View key={i} style={ra.row}>
+              <View style={ra.dot} />
+              <Text style={ra.text}>{r}</Text>
+            </View>
+          ))}
+        </Animated.View>
+      )}
+      {strengths.length > 0 && strengths[0] !== 'Financial data available for analysis.' && (
+        <Animated.View style={[str.card, riskAnim]}>
+          <View style={str.titleRow}>
+            <Ionicons name="checkmark-circle-outline" size={16} color={colors.green} />
+            <Text style={str.title}>Strengths</Text>
+          </View>
+          {strengths.map((s, i) => (
+            <View key={i} style={str.row}>
+              <Ionicons name="checkmark" size={12} color={colors.green} />
+              <Text style={str.text}>{s}</Text>
+            </View>
+          ))}
+        </Animated.View>
+      )}
     </View>
   );
 }
+
+const ra = StyleSheet.create({
+  card:     { backgroundColor: '#FFF8F8', borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: '#FFCDD2' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  title:    { color: colors.red, fontSize: 14, fontWeight: '700' },
+  row:      { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 6 },
+  dot:      { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.red, marginTop: 6 },
+  text:     { flex: 1, color: colors.text, fontSize: 13, lineHeight: 19 },
+});
+
+const str = StyleSheet.create({
+  card:     { backgroundColor: '#F1FFF4', borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: '#A5D6A7' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  title:    { color: colors.green, fontSize: 14, fontWeight: '700' },
+  row:      { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 6 },
+  text:     { flex: 1, color: colors.text, fontSize: 13, lineHeight: 19 },
+});
 
 // ─── PLACEHOLDER CHART DATA ───────────────────────────────────────────────────
 
@@ -992,12 +1052,515 @@ const az = StyleSheet.create({
   emptyText:    { color: colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 20, maxWidth: 280 },
 });
 
+// ─── BANKING SCREEN ───────────────────────────────────────────────────────────
+
+const DEMO_BANKING = {
+  company_name: 'Demo Business',
+  total_credits: 1200000,
+  total_debits: 960000,
+  average_balance: 180000,
+  minimum_balance: 42000,
+  opening_balance: 150000,
+  closing_balance: 210000,
+  cash_deposits: 90000,
+  cheque_bounces: 1,
+  loan_repayments: 60000,
+  overdraft_usage: 0,
+  ecs_emi_payments: 80000,
+  num_transactions: 120,
+  sanctioned_limit: 500000,
+  utilized_limit: 0,
+};
+
+function ScoreRing({ score }) {
+  const label = score >= 85 ? 'EXCELLENT' : score >= 70 ? 'GOOD' : score >= 55 ? 'MODERATE' : score >= 40 ? 'RISKY' : 'CRITICAL';
+  const bg    = score >= 85 ? colors.green  : score >= 70 ? colors.primary : score >= 55 ? colors.yellow : colors.red;
+  return (
+    <View style={sr.wrap}>
+      <View style={[sr.ring, { borderColor: bg }]}>
+        <Text style={[sr.score, { color: bg }]}>{score}</Text>
+        <Text style={sr.scoreLabel}>/100</Text>
+      </View>
+      <Text style={[sr.status, { color: bg }]}>{label}</Text>
+    </View>
+  );
+}
+
+const sr = StyleSheet.create({
+  wrap:       { alignItems: 'center', marginBottom: 8 },
+  ring:       { width: 100, height: 100, borderRadius: 50, borderWidth: 8, alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } }, android: { elevation: 3 } }) },
+  score:      { fontSize: 28, fontWeight: '800' },
+  scoreLabel: { color: colors.textMuted, fontSize: 11 },
+  status:     { fontSize: 13, fontWeight: '700', letterSpacing: 0.5, marginTop: 6 },
+});
+
+function RiskAlert({ text }) {
+  return (
+    <View style={ral.row}>
+      <Ionicons name="warning" size={14} color={colors.red} />
+      <Text style={ral.text}>{text}</Text>
+    </View>
+  );
+}
+
+const ral = StyleSheet.create({
+  row:  { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 },
+  text: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 19 },
+});
+
+function BankingScreen() {
+  const [result,  setResult]  = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState(null);
+  const headerAnim = useFadeSlideIn(0);
+  const resultAnim = useFadeSlideIn(100);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const data = await apiPost('/api/analysis/banking', DEMO_BANKING);
+      setResult(data);
+    } catch (e) {
+      setError(e.message || 'Banking analysis failed. Check API connection.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const fmtK = (v) => v == null ? '–' : formatCurrency(v);
+  const scoreColor = (s) => s >= 85 ? colors.green : s >= 65 ? colors.yellow : s >= 50 ? colors.orange : colors.red;
+
+  return (
+    <SafeAreaView style={s.container}>
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <Animated.View style={[s.header, headerAnim]}>
+          <View>
+            <Text style={s.brand}>FINANCIAL ANALYTICS</Text>
+            <Text style={s.title}>Banking Analysis</Text>
+            <Text style={s.date}>Perfios-style Credit Assessment</Text>
+          </View>
+          <View style={[s.refreshBtn, { backgroundColor: `${colors.primary}20` }]}>
+            <Ionicons name="business-outline" size={22} color={colors.primary} />
+          </View>
+        </Animated.View>
+
+        {/* Demo Button */}
+        <SectionHeader title="Run Analysis" color={colors.primary} />
+        <TouchableOpacity style={bk.liveBtn} onPress={runDemo} activeOpacity={0.75} disabled={loading}>
+          <Ionicons name="analytics-outline" size={16} color={colors.card} />
+          <Text style={bk.liveBtnText}>Run Demo Banking Analysis</Text>
+        </TouchableOpacity>
+
+        {loading && (
+          <View style={s.loadingBox}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={s.loadingText}>Analyzing banking data…</Text>
+          </View>
+        )}
+
+        {!!error && (
+          <View style={s.errorBox}>
+            <Ionicons name="alert-circle-outline" size={24} color={colors.red} />
+            <Text style={s.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {!loading && result && (
+          <Animated.View style={resultAnim}>
+            {/* 1. Banking Health Score */}
+            <SectionHeader title="Banking Health Score" color={colors.primary} />
+            <View style={bk.healthCard}>
+              <ScoreRing score={result.health_score} />
+              <View style={bk.healthInfo}>
+                <Text style={bk.healthGrade}>Grade {result.grade}</Text>
+                <Text style={bk.healthRisk}>Risk: {result.risk_level}</Text>
+                <View style={[bk.eligBadge, {
+                  backgroundColor: result.eligibility_status === 'ELIGIBLE' ? '#E8F5E9'
+                    : result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? '#FFF8E1' : '#FFEBEE',
+                  borderColor: result.eligibility_status === 'ELIGIBLE' ? colors.green
+                    : result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? colors.yellow : colors.red,
+                }]}>
+                  <Text style={[bk.eligText, {
+                    color: result.eligibility_status === 'ELIGIBLE' ? colors.green
+                      : result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? colors.yellow : colors.red,
+                  }]}>
+                    {result.eligibility_status}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {/* 2. Banking KPI Cards */}
+            <SectionHeader title="Key Banking Metrics" color={colors.yellow} />
+            <View style={s.kpiRow}>
+              <KPICard
+                title="Monthly Inflow"
+                value={fmtK(result.monthly_inflow)}
+                subtitle="Avg monthly credits"
+                icon="trending-up-outline"
+                iconColor={colors.green}
+                delay={100}
+              />
+              <KPICard
+                title="Monthly Outflow"
+                value={fmtK(result.monthly_outflow)}
+                subtitle="Avg monthly debits"
+                icon="trending-down-outline"
+                iconColor={colors.red}
+                delay={200}
+              />
+            </View>
+            <View style={s.kpiRow}>
+              <KPICard
+                title="Avg Balance"
+                value={fmtK(result.input_data?.average_balance)}
+                subtitle="Average account balance"
+                icon="wallet-outline"
+                iconColor={colors.primary}
+                delay={300}
+              />
+              <KPICard
+                title="EMI Obligations"
+                value={fmtK(result.input_data?.ecs_emi_payments)}
+                subtitle="Monthly EMI payments"
+                icon="card-outline"
+                iconColor={colors.orange}
+                delay={400}
+              />
+            </View>
+
+            {/* 3. Cash Flow Trend Chart */}
+            {result.cash_flow_trend?.length > 0 && (
+              <>
+                <SectionHeader title="Cash Flow Trend" color={colors.cyan} />
+                <View style={s.chartCard}>
+                  <Text style={s.chartTitle}>Monthly Cash Flow (6 months)</Text>
+                  <Text style={s.chartSub}>Green = Inflow · Red = Outflow</Text>
+                  <BarChart
+                    data={result.cash_flow_trend.map(m => ({
+                      value: m.inflow,
+                      label: m.month,
+                      labelTop: formatCurrency(m.inflow),
+                    }))}
+                    delay={200}
+                    colorFn={() => colors.chartBar}
+                  />
+                </View>
+              </>
+            )}
+
+            {/* 4. Risk Alerts */}
+            {result.risks?.length > 0 && (
+              <>
+                <SectionHeader title="Risk Alerts" color={colors.red} />
+                <View style={bk.riskCard}>
+                  {result.risks.map((r, i) => <RiskAlert key={i} text={r} />)}
+                </View>
+              </>
+            )}
+
+            {/* 5. Insight Chips */}
+            {result.insights?.length > 0 && (
+              <>
+                <SectionHeader title="Insights" color={colors.cyan} />
+                <View style={bk.insightRow}>
+                  {result.insights.slice(0, 3).map((ins, i) => {
+                    const insColor = i === 0 ? colors.primary : i === 1 ? colors.yellow : colors.cyan;
+                    const insIcon  = i === 0 ? 'analytics-outline' : i === 1 ? 'cash-outline' : 'shield-outline';
+                    return (
+                      <View
+                        key={i}
+                        style={[ic.chip, { borderColor: `${insColor}50`, backgroundColor: `${insColor}12` }]}
+                      >
+                        <Ionicons name={insIcon} size={15} color={insColor} />
+                        <Text style={[ic.label, { color: insColor }]} numberOfLines={2}>{ins}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
+            {/* 6. AI Summary */}
+            {result.ai_summary ? (
+              <>
+                <SectionHeader title="AI Summary" color={colors.primary} />
+                <SummaryCard summary={result.ai_summary} animStyle={resultAnim} />
+              </>
+            ) : null}
+
+            {/* 7. Score Breakdown */}
+            <SectionHeader title="Score Breakdown" color={colors.textSecondary} />
+            <DataTable rows={[
+              { label: 'Liquidity Score',    value: `${result.liquidity_score}/100`,    bold: false, valueColor: scoreColor(result.liquidity_score) },
+              { label: 'Cash Flow Score',    value: `${result.cash_flow_score}/100`,    bold: false, valueColor: scoreColor(result.cash_flow_score) },
+              { label: 'Credit Score',       value: `${result.credit_score_component}/100`, bold: false, valueColor: scoreColor(result.credit_score_component) },
+              { label: 'Repayment Score',    value: `${result.repayment_score}/100`,    bold: false, valueColor: scoreColor(result.repayment_score) },
+              { label: 'Stability Score',    value: `${result.stability_score}/100`,    bold: false, valueColor: scoreColor(result.stability_score) },
+              { label: 'Overall Score',      value: `${result.credit_score}/100`,       bold: true,  valueColor: scoreColor(result.credit_score) },
+            ]} />
+          </Animated.View>
+        )}
+
+        {!loading && !result && !error && (
+          <View style={az.empty}>
+            <Ionicons name="business-outline" size={52} color={colors.textMuted} />
+            <Text style={az.emptyTitle}>No Banking Analysis Yet</Text>
+            <Text style={az.emptyText}>
+              Tap the button above to run a Perfios-style banking analysis with health score, risk alerts, and AI summary.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const bk = StyleSheet.create({
+  liveBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 14, marginBottom: 24, ...Platform.select({ ios: { shadowColor: colors.primaryDark, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, android: { elevation: 4 } }) },
+  liveBtnText: { color: colors.card, fontSize: 14, fontWeight: '700', letterSpacing: 0.3 },
+  healthCard:  { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: 16, padding: 20, borderWidth: 1, borderColor: colors.cardBorder, marginBottom: 14, gap: 20, ...Platform.select({ ios: { shadowColor: '#1A2E1A', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8 }, android: { elevation: 2 } }) },
+  healthInfo:  { flex: 1, gap: 6 },
+  healthGrade: { color: colors.text, fontSize: 20, fontWeight: '800' },
+  healthRisk:  { color: colors.textSecondary, fontSize: 13 },
+  eligBadge:   { alignSelf: 'flex-start', borderRadius: 20, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 5, marginTop: 4 },
+  eligText:    { fontSize: 12, fontWeight: '700' },
+  riskCard:    { backgroundColor: '#FFF8F8', borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: '#FFCDD2' },
+  insightRow:  { flexDirection: 'row', gap: 8, marginBottom: 20 },
+});
+
+// ─── TREND SCREEN ─────────────────────────────────────────────────────────────
+
+const DEMO_TREND = {
+  company_name: 'Demo Corp',
+  years_data: [
+    { year: '2022', balance_sheet: { current_assets: 800000, current_liabilities: 550000, inventory: 150000, debtors: 200000, creditors: 180000, cash_bank_balance: 90000 }, profit_loss: { revenue: 2000000, cogs: 1300000, purchases: 900000, operating_expenses: 350000, net_profit: 120000 } },
+    { year: '2023', balance_sheet: { current_assets: 950000, current_liabilities: 600000, inventory: 170000, debtors: 240000, creditors: 190000, cash_bank_balance: 130000 }, profit_loss: { revenue: 2400000, cogs: 1520000, purchases: 1050000, operating_expenses: 380000, net_profit: 160000 } },
+    { year: '2024', balance_sheet: { current_assets: 1100000, current_liabilities: 650000, inventory: 190000, debtors: 280000, creditors: 200000, cash_bank_balance: 180000 }, profit_loss: { revenue: 2900000, cogs: 1780000, purchases: 1200000, operating_expenses: 420000, net_profit: 220000 } },
+  ],
+};
+
+function GrowthBadge({ label, value, positive }) {
+  const color = positive ? colors.green : colors.red;
+  const icon  = positive ? 'trending-up' : 'trending-down';
+  return (
+    <View style={[gb.badge, { backgroundColor: `${color}15`, borderColor: `${color}40` }]}>
+      <Ionicons name={icon} size={14} color={color} />
+      <Text style={[gb.label, { color }]}>{label}</Text>
+      <Text style={[gb.value, { color }]}>{value}</Text>
+    </View>
+  );
+}
+
+const gb = StyleSheet.create({
+  badge:  { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 10, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 8 },
+  label:  { flex: 1, fontSize: 13, fontWeight: '600' },
+  value:  { fontSize: 13, fontWeight: '700' },
+});
+
+function TrendScreen() {
+  const [result,  setResult]  = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState(null);
+  const headerAnim = useFadeSlideIn(0);
+  const resultAnim = useFadeSlideIn(100);
+
+  const runDemo = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const data = await apiPost('/api/analysis/trend', DEMO_TREND);
+      setResult(data);
+    } catch (e) {
+      setError(e.message || 'Trend analysis failed. Check API connection.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const fmtL = (v) => v == null ? '–' : `₹${(v / 100000).toFixed(1)}L`;
+
+  return (
+    <SafeAreaView style={s.container}>
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <Animated.View style={[s.header, headerAnim]}>
+          <View>
+            <Text style={s.brand}>FINANCIAL ANALYTICS</Text>
+            <Text style={s.title}>Multi-Year Trend</Text>
+            <Text style={s.date}>Growth & Pattern Analysis</Text>
+          </View>
+          <View style={[s.refreshBtn, { backgroundColor: `${colors.cyan}20` }]}>
+            <Ionicons name="trending-up-outline" size={22} color={colors.cyan} />
+          </View>
+        </Animated.View>
+
+        <SectionHeader title="Run Analysis" color={colors.cyan} />
+        <TouchableOpacity style={tr.liveBtn} onPress={runDemo} activeOpacity={0.75} disabled={loading}>
+          <Ionicons name="bar-chart-outline" size={16} color={colors.card} />
+          <Text style={tr.liveBtnText}>Run 3-Year Demo Analysis</Text>
+        </TouchableOpacity>
+
+        {loading && (
+          <View style={s.loadingBox}>
+            <ActivityIndicator size="large" color={colors.cyan} />
+            <Text style={s.loadingText}>Analyzing multi-year trends…</Text>
+          </View>
+        )}
+
+        {!!error && (
+          <View style={s.errorBox}>
+            <Ionicons name="alert-circle-outline" size={24} color={colors.red} />
+            <Text style={s.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {!loading && result && (
+          <Animated.View style={resultAnim}>
+            {/* 1. Revenue Trend Chart */}
+            <SectionHeader title="Revenue Trend" color={colors.primary} />
+            <View style={s.chartCard}>
+              <Text style={s.chartTitle}>Revenue by Year</Text>
+              <Text style={s.chartSub}>Amounts in Lakhs (₹)</Text>
+              <BarChart
+                data={result.years.map((y, i) => ({
+                  value: result.trends.revenue[i] || 0,
+                  label: y,
+                  labelTop: fmtL(result.trends.revenue[i]),
+                }))}
+                delay={100}
+                colorFn={() => colors.primary}
+              />
+            </View>
+
+            {/* 2. Net Profit Trend Chart */}
+            <SectionHeader title="Net Profit Trend" color={colors.green} />
+            <View style={s.chartCard}>
+              <Text style={s.chartTitle}>Net Profit by Year</Text>
+              <Text style={s.chartSub}>Green = profit · Red = loss</Text>
+              <BarChart
+                data={result.years.map((y, i) => ({
+                  value: result.trends.net_profit[i] || 0,
+                  label: y,
+                  labelTop: fmtL(result.trends.net_profit[i]),
+                }))}
+                delay={200}
+                colorFn={(item) => item.value >= 0 ? colors.green : colors.red}
+              />
+            </View>
+
+            {/* 3. Year Comparison Table */}
+            <SectionHeader title="Year Comparison" color={colors.yellow} />
+            <DataTable rows={[
+              { label: 'Year', value: result.years.join(' → '), bold: true },
+              ...result.years.map((y, i) => ({
+                label: `FY ${y} Revenue`,
+                value: fmtL(result.trends.revenue[i]),
+                valueColor: colors.primary,
+              })),
+              ...result.years.map((y, i) => ({
+                label: `FY ${y} Net Profit`,
+                value: fmtL(result.trends.net_profit[i]),
+                valueColor: (result.trends.net_profit[i] || 0) >= 0 ? colors.green : colors.red,
+              })),
+              ...result.years.map((y, i) => ({
+                label: `FY ${y} Current Ratio`,
+                value: `${(result.trends.current_ratio[i] || 0).toFixed(2)}x`,
+                valueColor: (result.trends.current_ratio[i] || 0) >= 1.33 ? colors.green : colors.yellow,
+              })),
+            ]} />
+
+            {/* 4. Growth Patterns */}
+            {result.patterns && Object.keys(result.patterns).length > 0 && (
+              <>
+                <SectionHeader title="Growth Patterns" color={colors.cyan} />
+                <View style={tr.patternsCard}>
+                  {Object.entries(result.patterns).map(([metric, pattern]) => (
+                    <GrowthBadge
+                      key={metric}
+                      label={metric.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                      value={pattern}
+                      positive={pattern === 'growing' || pattern === 'stable'}
+                    />
+                  ))}
+                </View>
+              </>
+            )}
+
+            {/* 5. CAGR */}
+            {result.growth_trends?.cagr && (
+              <>
+                <SectionHeader title="CAGR Metrics" color={colors.orange} />
+                <DataTable rows={Object.entries(result.growth_trends.cagr)
+                  .filter(([, v]) => v != null)
+                  .map(([k, v]) => ({
+                    label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+                    value: `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`,
+                    valueColor: v >= 0 ? colors.green : colors.red,
+                  }))
+                } />
+              </>
+            )}
+
+            {/* 6. AI Analysis */}
+            {result.ai_analysis && (
+              <>
+                <SectionHeader title="AI Analysis" color={colors.primary} />
+                <AnalysisResultCard analysis={result.ai_analysis} />
+              </>
+            )}
+
+            {/* 7. Key Insights */}
+            <SectionHeader title="Key Insights" color={colors.primary} />
+            <View style={tr.insightsCard}>
+              {result.insights.map((insight, i) => (
+                <View key={i} style={tr.insightRow}>
+                  <Ionicons name="information-circle" size={16} color={colors.primary} />
+                  <Text style={tr.insightText}>{insight}</Text>
+                </View>
+              ))}
+            </View>
+
+            {/* 8. Recommendation */}
+            <SectionHeader title="Recommendation" color={colors.green} />
+            <SummaryCard summary={result.recommendation} animStyle={resultAnim} />
+          </Animated.View>
+        )}
+
+        {!loading && !result && !error && (
+          <View style={az.empty}>
+            <Ionicons name="trending-up-outline" size={52} color={colors.textMuted} />
+            <Text style={az.emptyTitle}>No Trend Analysis Yet</Text>
+            <Text style={az.emptyText}>
+              Tap the button above to run a 3-year trend analysis with growth patterns, CAGR, and AI insights.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const tr = StyleSheet.create({
+  liveBtn:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: colors.cyan, borderRadius: 12, paddingVertical: 14, marginBottom: 24, ...Platform.select({ ios: { shadowColor: colors.primaryDark, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, android: { elevation: 4 } }) },
+  liveBtnText:  { color: colors.card, fontSize: 14, fontWeight: '700', letterSpacing: 0.3 },
+  patternsCard: { backgroundColor: colors.card, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: colors.cardBorder },
+  insightsCard: { backgroundColor: colors.card, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: colors.cardBorder },
+  insightRow:   { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
+  insightText:  { flex: 1, color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
+});
+
 // ─── BOTTOM TAB BAR ───────────────────────────────────────────────────────────
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: 'stats-chart-outline' },
   { key: 'analysis',  label: 'Analysis',  icon: 'pulse-outline'       },
-  { key: 'health',    label: 'API Status', icon: 'cloud-outline'       },
+  { key: 'banking',   label: 'Banking',   icon: 'business-outline'    },
+  { key: 'trend',     label: 'Trend',     icon: 'trending-up-outline' },
 ];
 
 function TabBar({ active, onChange }) {
@@ -1102,7 +1665,8 @@ export default function App() {
       <View style={{ flex: 1, backgroundColor: colors.background }}>
         {activeTab === 'dashboard' ? <DashboardScreen />
           : activeTab === 'analysis' ? <AnalysisScreen />
-          : <ApiHealthScreen />}
+          : activeTab === 'banking'  ? <BankingScreen />
+          : <TrendScreen />}
         <TabBar active={activeTab} onChange={setActiveTab} />
       </View>
     </SafeAreaProvider>
