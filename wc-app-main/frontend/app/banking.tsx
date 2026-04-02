@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
 import { colors } from '../src/theme/colors';
-import { Card, SectionHeader, InputField, StatusBadge } from '../src/components';
+import { Card, SectionHeader, InputField, StatusBadge, AppHeader, InsightCard, SummarySection } from '../src/components';
 import { analyzeBanking, saveCase, parseDocument, exportPDF } from '../src/api';
 import { BankingResult } from '../src/types';
 import { useAppStore } from '../src/store';
@@ -276,11 +276,10 @@ export default function BankingScreen() {
         extraScrollHeight={100}
       >
         {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.brandName}>FINANCIAL ANALYTICS</Text>
-          <Text style={styles.title}>Banking Performance</Text>
-          <Text style={styles.subtitle}>Bank Statement Analysis & Credit Assessment</Text>
-        </View>
+        <AppHeader
+          title="Banking Performance"
+          subtitle="Bank Statement Analysis & Credit Assessment"
+        />
 
         {/* Upload Bank Statement */}
         <Card>
@@ -542,56 +541,14 @@ export default function BankingScreen() {
 
             {/* 5. AI Summary */}
             <SectionHeader title="AI Analysis Summary" color={colors.purple} />
-            <Card>
-              <View style={styles.eligibilityRow}>
-                <View style={[
-                  styles.eligibilityBadge,
-                  {
-                    backgroundColor:
-                      result.eligibility_status === 'ELIGIBLE' ? colors.green + '20' :
-                      result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? colors.yellow + '20' :
-                      colors.red + '20',
-                  }
-                ]}>
-                  <Ionicons
-                    name={
-                      result.eligibility_status === 'ELIGIBLE' ? 'checkmark-circle' :
-                      result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? 'alert-circle' :
-                      'close-circle'
-                    }
-                    size={16}
-                    color={
-                      result.eligibility_status === 'ELIGIBLE' ? colors.green :
-                      result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? colors.yellow :
-                      colors.red
-                    }
-                  />
-                  <Text style={[
-                    styles.eligibilityText,
-                    {
-                      color:
-                        result.eligibility_status === 'ELIGIBLE' ? colors.green :
-                        result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? colors.yellow :
-                        colors.red,
-                    }
-                  ]}>
-                    {result.eligibility_status}
-                  </Text>
-                </View>
-              </View>
-              <Text style={styles.aiSummaryText}>{result.ai_summary}</Text>
-            </Card>
+            <SummarySection
+              summary={result.ai_summary}
+              eligibilityStatus={result.eligibility_status}
+            />
 
             {/* 6. Insights Cards */}
             <SectionHeader title="Key Insights" color={colors.primary} />
-            <View style={styles.insightsGrid}>
-              {result.insights.map((insight, i) => (
-                <View key={i} style={styles.insightCard}>
-                  <Ionicons name="bulb-outline" size={16} color={colors.primary} />
-                  <Text style={styles.insightText}>{insight}</Text>
-                </View>
-              ))}
-            </View>
+            <InsightCard items={result.insights} type="info" />
           </>
         )}
 
@@ -716,25 +673,11 @@ export default function BankingScreen() {
 
             {/* Strengths */}
             <SectionHeader title="Strengths" color={colors.green} />
-            <Card>
-              {result.strengths.map((s, i) => (
-                <View key={i} style={styles.listItem}>
-                  <Ionicons name="checkmark-circle" size={16} color={colors.green} />
-                  <Text style={styles.listText}>{s}</Text>
-                </View>
-              ))}
-            </Card>
+            <InsightCard items={result.strengths} type="strength" />
 
             {/* Concerns */}
             <SectionHeader title="Concerns" color={colors.red} />
-            <Card>
-              {result.concerns.map((c, i) => (
-                <View key={i} style={styles.listItem}>
-                  <Ionicons name="alert-circle" size={16} color={colors.red} />
-                  <Text style={styles.listText}>{c}</Text>
-                </View>
-              ))}
-            </Card>
+            <InsightCard items={result.concerns} type="risk" />
 
             {/* Recommendation */}
             <SectionHeader title="Credit Officer Recommendation" color={colors.primary} />
@@ -785,26 +728,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
     paddingBottom: 40,
-  },
-  header: {
-    marginBottom: 20,
-  },
-  brandName: {
-    color: colors.green,
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 2,
-    marginBottom: 4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  subtitle: {
-    color: colors.textSecondary,
-    fontSize: 13,
   },
   stepHeader: {
     flexDirection: 'row',

@@ -8,3 +8,7 @@ export { KPIBox } from './KPIBox';
 export { ChartCard } from './ChartCard';
 export { DataTable } from './DataTable';
 export type { TableRow } from './DataTable';
+export { AppHeader } from './AppHeader';
+export { EligibilityBadge } from './EligibilityBadge';
+export { InsightCard } from './InsightCard';
+export { SummarySection } from './SummarySection';
