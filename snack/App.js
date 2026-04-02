@@ -38,6 +38,16 @@ async function apiFetch(path) {
   return res.json();
 }
 
+async function apiPost(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 // ─── THEME ────────────────────────────────────────────────────────────────────
 
 const colors = {
@@ -79,6 +89,65 @@ function formatDate(isoString) {
   if (!isoString) return '';
   const d = new Date(isoString);
   return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function extractInsights(summary) {
+  if (!summary) return [];
+  const text = summary.toLowerCase();
+  const insights = [];
+
+  // Liquidity — use word boundary to avoid matching 'illiquid', 'liquidation' substrings
+  const hasLiquidity = /\bliquid(ity)?\b/.test(text) || /\bcurrent ratio\b/.test(text) || /\bcash\b/.test(text);
+  if (hasLiquidity) {
+    const positive =
+      /\bstrong\b/.test(text) || /\badequate\b/.test(text) ||
+      /\bsufficient\b/.test(text) || /\bhealthy\b/.test(text) ||
+      /\bcomfortable\b/.test(text);
+    insights.push({
+      label: positive ? 'Strong Liquidity' : 'Liquidity Concern',
+      icon:  positive ? 'water-outline'    : 'warning-outline',
+      color: positive ? colors.green       : colors.yellow,
+    });
+  }
+
+  // Risk / Debt — match whole words only
+  const hasRisk = /\brisk\b/.test(text) || /\bdebt\b/.test(text) || /\bliabilities?\b/.test(text);
+  if (hasRisk) {
+    const high =
+      /\bhigh risk\b/.test(text) || /\belevated\b/.test(text) ||
+      /\bsignificant risk\b/.test(text) || /\bdeficit\b/.test(text);
+    insights.push({
+      label: high ? 'High Risk'        : 'Managed Risk',
+      icon:  high ? 'alert-circle-outline' : 'shield-checkmark-outline',
+      color: high ? colors.red         : colors.cyan,
+    });
+  }
+
+  // Growth / Stability — match whole words
+  const hasGrowth =
+    /\bgrowth\b/.test(text) || /\bstable\b/.test(text) ||
+    /\brevenue\b/.test(text) || /\bprofit(able)?\b/.test(text);
+  if (hasGrowth) {
+    const positive =
+      /\bstable\b/.test(text) || /\bpositive\b/.test(text) ||
+      /\bgrowth\b/.test(text) || /\bprofitabl/.test(text) ||
+      /\bconsistent\b/.test(text);
+    insights.push({
+      label: positive ? 'Stable Growth'   : 'Declining Trend',
+      icon:  positive ? 'trending-up-outline' : 'trending-down-outline',
+      color: positive ? colors.primary    : colors.orange,
+    });
+  }
+
+  // Fallback
+  if (insights.length === 0) {
+    insights.push(
+      { label: 'Analysis Complete', icon: 'checkmark-done-outline', color: colors.cyan },
+      { label: 'Review Summary',    icon: 'document-text-outline',  color: colors.yellow },
+    );
+  }
+
+  return insights.slice(0, 3);
 }
 
 // ─── ANIMATION HOOKS ─────────────────────────────────────────────────────────
@@ -301,6 +370,132 @@ const hc = StyleSheet.create({
   sub:      { color: colors.textMuted, fontSize: 12 },
   error:    { color: colors.red, fontSize: 13 },
 });
+
+// ── Eligibility Badge ─────────────────────────────────────────────────────────
+
+function EligibilityBadge({ status, animStyle }) {
+  const isEligible = status === 'Eligible';
+  const bg         = isEligible ? '#E8F5E9' : '#FFEBEE';
+  const border     = isEligible ? '#A5D6A7' : '#FFCDD2';
+  const textColor  = isEligible ? colors.green : colors.red;
+  const icon       = isEligible ? 'checkmark-circle' : 'close-circle';
+
+  return (
+    <Animated.View style={[eb.wrap, animStyle]}>
+      <View style={[eb.badge, { backgroundColor: bg, borderColor: border }]}>
+        <Ionicons name={icon} size={30} color={textColor} />
+        <Text style={[eb.text, { color: textColor }]}>{status ?? 'Unknown'}</Text>
+      </View>
+      <Text style={eb.sub}>Eligibility Status</Text>
+    </Animated.View>
+  );
+}
+
+const eb = StyleSheet.create({
+  wrap:  { alignItems: 'center', marginBottom: 24 },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 50,
+    borderWidth: 1.5,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12 },
+      android: { elevation: 4 },
+    }),
+  },
+  text:  { fontSize: 22, fontWeight: '800', letterSpacing: 0.5 },
+  sub:   { color: colors.textMuted, fontSize: 12, fontWeight: '500', marginTop: 8, letterSpacing: 0.4 },
+});
+
+// ── Summary Card ──────────────────────────────────────────────────────────────
+
+function SummaryCard({ summary, animStyle }) {
+  return (
+    <Animated.View style={[sc.card, animStyle]}>
+      <View style={sc.titleRow}>
+        <View style={sc.iconWrap}>
+          <Ionicons name="document-text-outline" size={17} color={colors.primary} />
+        </View>
+        <Text style={sc.title}>Financial Summary</Text>
+      </View>
+      <Text style={sc.body}>{summary || 'No summary available.'}</Text>
+    </Animated.View>
+  );
+}
+
+const sc = StyleSheet.create({
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    ...Platform.select({
+      ios:     { shadowColor: '#1A2E1A', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.09, shadowRadius: 12 },
+      android: { elevation: 3 },
+    }),
+  },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
+  iconWrap: { width: 34, height: 34, borderRadius: 9, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  title:    { color: colors.text, fontSize: 16, fontWeight: '700' },
+  body:     { color: colors.textSecondary, fontSize: 14, lineHeight: 23 },
+});
+
+// ── Insight Chip ──────────────────────────────────────────────────────────────
+
+function InsightChip({ label, icon, color, animStyle }) {
+  return (
+    <Animated.View style={[ic.chip, { borderColor: `${color}50`, backgroundColor: `${color}12` }, animStyle]}>
+      <Ionicons name={icon} size={15} color={color} />
+      <Text style={[ic.label, { color }]} numberOfLines={2}>{label}</Text>
+    </Animated.View>
+  );
+}
+
+const ic = StyleSheet.create({
+  chip:  { flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 12, borderRadius: 12, borderWidth: 1.2, flex: 1 },
+  label: { fontSize: 11, fontWeight: '700', textAlign: 'center' },
+});
+
+// ── Analysis Result Card (reusable) ───────────────────────────────────────────
+
+function AnalysisResultCard({ analysis }) {
+  const badgeAnim   = useFadeSlideIn(0);
+  const summaryAnim = useFadeSlideIn(180);
+  const chip0Anim   = useFadeSlideIn(320);
+  const chip1Anim   = useFadeSlideIn(400);
+  const chip2Anim   = useFadeSlideIn(480);
+  const chipAnims   = [chip0Anim, chip1Anim, chip2Anim];
+
+  const insights = extractInsights(analysis?.summary);
+
+  return (
+    <View>
+      <EligibilityBadge status={analysis?.eligibility_status} animStyle={badgeAnim} />
+      <SummaryCard summary={analysis?.summary} animStyle={summaryAnim} />
+      {insights.length > 0 && (
+        <>
+          <SectionHeader title="Key Insights" color={colors.cyan} />
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
+            {insights.map((ins, idx) => (
+              <InsightChip
+                key={ins.label}
+                label={ins.label}
+                icon={ins.icon}
+                color={ins.color}
+                animStyle={chipAnims[idx] ?? chip0Anim}
+              />
+            ))}
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
 
 // ─── PLACEHOLDER CHART DATA ───────────────────────────────────────────────────
 
@@ -635,11 +830,174 @@ function ApiHealthScreen() {
   );
 }
 
+// ─── ANALYSIS SCREEN ─────────────────────────────────────────────────────────
+
+const DEMO_ANALYSES = [
+  {
+    eligibility_status: 'Eligible',
+    summary:
+      'The company demonstrates strong financial health with adequate liquidity ratios and stable revenue growth. ' +
+      'Current ratio of 2.1 indicates comfortable coverage of short-term liabilities. ' +
+      'Cash flow is consistently positive, and working capital management has been well-maintained over the past three years. ' +
+      'Profit margins are healthy, reflecting sound operational efficiency.',
+  },
+  {
+    eligibility_status: 'Not Eligible',
+    summary:
+      'Analysis reveals elevated risk levels due to a high debt-to-equity ratio and declining revenue trends. ' +
+      'A liquidity deficit is observed with a current ratio below 1.0, signaling an inability to meet short-term obligations. ' +
+      'Working capital is negative and requires immediate corrective action. ' +
+      'Significant risk exposure to creditor defaults has been identified.',
+  },
+];
+
+function AnalysisScreen() {
+  const [analysis, setAnalysis] = useState(null);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState(null);
+  const headerAnim = useFadeSlideIn(0);
+
+  const runDemo = useCallback(async (index) => {
+    setLoading(true);
+    setError(null);
+    setAnalysis(null);
+    await new Promise(r => setTimeout(r, 900));
+    setAnalysis(DEMO_ANALYSES[index]);
+    setLoading(false);
+  }, []);
+
+  const runLive = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setAnalysis(null);
+    try {
+      const data = await apiPost('/api/analysis/wc', {
+        company_name: 'Demo Company',
+        balance_sheet: {
+          current_assets: 500000,
+          current_liabilities: 240000,
+          inventory: 80000,
+          debtors: 120000,
+          creditors: 100000,
+          cash_bank_balance: 60000,
+        },
+        profit_loss: {
+          revenue: 1200000,
+          cogs: 800000,
+          operating_expenses: 200000,
+          net_profit: 200000,
+        },
+      });
+      setAnalysis(data?.analysis ?? data);
+    } catch (e) {
+      setError(e.message || 'Analysis failed. Check API connection.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return (
+    <SafeAreaView style={s.container}>
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+
+        {/* ── Header ── */}
+        <Animated.View style={[s.header, headerAnim]}>
+          <View>
+            <Text style={s.brand}>FINANCIAL ANALYTICS</Text>
+            <Text style={s.title}>AI Analysis</Text>
+            <Text style={s.date}>Powered by Gemini AI</Text>
+          </View>
+          <View style={[s.refreshBtn, { backgroundColor: colors.primaryLight }]}>
+            <Ionicons name="pulse-outline" size={22} color={colors.primary} />
+          </View>
+        </Animated.View>
+
+        {/* ── Action Buttons ── */}
+        <SectionHeader title="Run Analysis" color={colors.primary} />
+        <View style={az.btnRow}>
+          <TouchableOpacity
+            style={[az.demoBtn, az.demoBtnGreen]}
+            onPress={() => runDemo(0)}
+            activeOpacity={0.75}
+            disabled={loading}
+          >
+            <Ionicons name="checkmark-circle-outline" size={16} color={colors.green} />
+            <Text style={[az.demoBtnText, { color: colors.green }]}>Demo: Eligible</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[az.demoBtn, az.demoBtnRed]}
+            onPress={() => runDemo(1)}
+            activeOpacity={0.75}
+            disabled={loading}
+          >
+            <Ionicons name="close-circle-outline" size={16} color={colors.red} />
+            <Text style={[az.demoBtnText, { color: colors.red }]}>Demo: Not Eligible</Text>
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity style={az.liveBtn} onPress={runLive} activeOpacity={0.75} disabled={loading}>
+          <Ionicons name="cloud-upload-outline" size={16} color={colors.card} />
+          <Text style={az.liveBtnText}>Run Live API Analysis</Text>
+        </TouchableOpacity>
+
+        {/* ── Loading ── */}
+        {loading && (
+          <View style={s.loadingBox}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={s.loadingText}>Analyzing financial data…</Text>
+          </View>
+        )}
+
+        {/* ── Error ── */}
+        {!!error && (
+          <View style={s.errorBox}>
+            <Ionicons name="alert-circle-outline" size={24} color={colors.red} />
+            <Text style={s.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {/* ── Result ── */}
+        {!loading && analysis && (
+          <>
+            <SectionHeader title="Analysis Result" color={colors.yellow} />
+            <AnalysisResultCard analysis={analysis} />
+          </>
+        )}
+
+        {/* ── Empty state ── */}
+        {!loading && !analysis && !error && (
+          <View style={az.empty}>
+            <Ionicons name="analytics-outline" size={52} color={colors.textMuted} />
+            <Text style={az.emptyTitle}>No Analysis Yet</Text>
+            <Text style={az.emptyText}>
+              Tap a button above to run an analysis and see the AI-generated eligibility result.
+            </Text>
+          </View>
+        )}
+
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const az = StyleSheet.create({
+  btnRow:       { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  demoBtn:      { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 13, borderRadius: 12, borderWidth: 1.2 },
+  demoBtnGreen: { backgroundColor: colors.primaryLight, borderColor: colors.green },
+  demoBtnRed:   { backgroundColor: '#FFEBEE', borderColor: colors.red },
+  demoBtnText:  { fontSize: 13, fontWeight: '600' },
+  liveBtn:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 14, marginBottom: 24, ...Platform.select({ ios: { shadowColor: colors.primaryDark, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, android: { elevation: 4 } }) },
+  liveBtnText:  { color: colors.card, fontSize: 14, fontWeight: '700', letterSpacing: 0.3 },
+  empty:        { alignItems: 'center', paddingVertical: 56, gap: 12 },
+  emptyTitle:   { color: colors.text, fontSize: 18, fontWeight: '700' },
+  emptyText:    { color: colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 20, maxWidth: 280 },
+});
+
 // ─── BOTTOM TAB BAR ───────────────────────────────────────────────────────────
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: 'stats-chart-outline' },
-  { key: 'health',    label: 'API Status', icon: 'cloud-outline' },
+  { key: 'analysis',  label: 'Analysis',  icon: 'pulse-outline'       },
+  { key: 'health',    label: 'API Status', icon: 'cloud-outline'       },
 ];
 
 function TabBar({ active, onChange }) {
@@ -742,7 +1100,9 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <View style={{ flex: 1, backgroundColor: colors.background }}>
-        {activeTab === 'dashboard' ? <DashboardScreen /> : <ApiHealthScreen />}
+        {activeTab === 'dashboard' ? <DashboardScreen />
+          : activeTab === 'analysis' ? <AnalysisScreen />
+          : <ApiHealthScreen />}
         <TabBar active={activeTab} onChange={setActiveTab} />
       </View>
     </SafeAreaProvider>
