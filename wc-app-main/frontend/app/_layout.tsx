@@ -13,7 +13,7 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <StatusBar style="light" />
+        <StatusBar style="dark" />
         <View style={styles.container}>
           <Tabs
             screenOptions={{
@@ -99,6 +99,6 @@ const styles = StyleSheet.create({
   },
   tabLabel: {
     fontSize: 10,
-    fontWeight: '500',
+    fontWeight: '600',
   },
 });

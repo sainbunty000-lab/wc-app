@@ -1,18 +1,76 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  RefreshControl,
+  TouchableOpacity,
+  Dimensions,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withDelay,
+  Easing,
+  FadeIn,
+} from 'react-native-reanimated';
+import { LineChart, BarChart } from 'react-native-gifted-charts';
 import { colors } from '../src/theme/colors';
-import { Card, SectionHeader } from '../src/components';
+import { Card, SectionHeader, KPIBox, ChartCard, DataTable } from '../src/components';
 import { getDashboardStats } from '../src/api';
 import { DashboardStats } from '../src/types';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const CHART_WIDTH = SCREEN_WIDTH - 64; // account for padding + card padding
+
+// Placeholder chart data shown when no real data is available
+const PLACEHOLDER_LINE_DATA = [
+  { value: 420000, label: 'Jan' },
+  { value: 380000, label: 'Feb' },
+  { value: 510000, label: 'Mar' },
+  { value: 470000, label: 'Apr' },
+  { value: 560000, label: 'May' },
+  { value: 620000, label: 'Jun' },
+];
+
+const PLACEHOLDER_BAR_DATA = [
+  { value: 120000, label: 'Jan', frontColor: colors.chartBar },
+  { value: -40000, label: 'Feb', frontColor: colors.error },
+  { value: 130000, label: 'Mar', frontColor: colors.chartBar },
+  { value: -30000, label: 'Apr', frontColor: colors.error },
+  { value: 90000, label: 'May', frontColor: colors.chartBar },
+  { value: 60000, label: 'Jun', frontColor: colors.chartBar },
+];
+
+const formatCurrency = (value: number): string => {
+  if (Math.abs(value) >= 1_000_000) return `₹${(value / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(value) >= 1_000) return `₹${(value / 1_000).toFixed(0)}K`;
+  return `₹${value}`;
+};
 
 export default function DashboardScreen() {
   const router = useRouter();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Header fade-in animation
+  const headerOpacity = useSharedValue(0);
+  const headerTranslateY = useSharedValue(-10);
+  const headerStyle = useAnimatedStyle(() => ({
+    opacity: headerOpacity.value,
+    transform: [{ translateY: headerTranslateY.value }],
+  }));
+
+  useEffect(() => {
+    headerOpacity.value = withTiming(1, { duration: 500, easing: Easing.out(Easing.ease) });
+    headerTranslateY.value = withTiming(0, { duration: 500, easing: Easing.out(Easing.ease) });
+  }, []);
 
   const fetchStats = async () => {
     try {
@@ -37,131 +95,263 @@ export default function DashboardScreen() {
 
   const today = new Date();
   const dateString = today.toLocaleDateString('en-US', {
-    weekday: 'long',
+    weekday: 'short',
     day: 'numeric',
-    month: 'long',
+    month: 'short',
     year: 'numeric',
   });
+
+  // Derive KPI values from latest WC result stored in recent cases
+  const latestWC = stats?.recent_cases?.find(c => c.analysis_type === 'wc')?.data;
+  const workingCapital = latestWC?.net_working_capital ?? null;
+  const currentRatio = latestWC?.current_ratio ?? null;
+  const prevWC = stats?.recent_cases
+    ?.filter(c => c.analysis_type === 'wc')
+    ?.slice(1, 2)?.[0]?.data?.net_working_capital ?? null;
+  const changeWC =
+    workingCapital !== null && prevWC !== null ? workingCapital - prevWC : null;
+
+  const currentAssets = latestWC?.input_data?.balance_sheet?.current_assets ?? null;
+  const currentLiabilities = latestWC?.input_data?.balance_sheet?.current_liabilities ?? null;
+  const inventory = latestWC?.input_data?.balance_sheet?.inventory ?? null;
+  const debtors = latestWC?.input_data?.balance_sheet?.debtors ?? null;
+  const creditors = latestWC?.input_data?.balance_sheet?.creditors ?? null;
+  const cashBank = latestWC?.input_data?.balance_sheet?.cash_bank_balance ?? null;
+
+  const assetsTableRows = [
+    { label: 'Cash & Bank Balance', value: currentAssets !== null ? formatCurrency(cashBank ?? 0) : '–' },
+    { label: 'Debtors / Receivables', value: debtors !== null ? formatCurrency(debtors) : '–' },
+    { label: 'Inventory', value: inventory !== null ? formatCurrency(inventory) : '–' },
+    {
+      label: 'Total Current Assets',
+      value: currentAssets !== null ? formatCurrency(currentAssets) : '–',
+      bold: true,
+      valueColor: colors.primary,
+    },
+  ];
+
+  const liabilitiesTableRows = [
+    { label: 'Creditors / Payables', value: creditors !== null ? formatCurrency(creditors) : '–' },
+    {
+      label: 'Total Current Liabilities',
+      value: currentLiabilities !== null ? formatCurrency(currentLiabilities) : '–',
+      bold: true,
+      valueColor: colors.error,
+    },
+  ];
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
         }
       >
-        {/* Header */}
-        <View style={styles.header}>
+        {/* ── Header ── */}
+        <Animated.View style={[styles.header, headerStyle]}>
           <View>
             <Text style={styles.brandName}>FINANCIAL ANALYTICS</Text>
-            <Text style={styles.title}>Analytics Dashboard</Text>
+            <Text style={styles.title}>Dashboard</Text>
             <Text style={styles.date}>{dateString}</Text>
           </View>
-          <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
-            <Ionicons name="refresh-outline" size={24} color={colors.text} />
+          <TouchableOpacity style={styles.refreshButton} onPress={onRefresh} activeOpacity={0.7}>
+            <Ionicons name="refresh-outline" size={22} color={colors.primary} />
           </TouchableOpacity>
+        </Animated.View>
+
+        {/* ── Status badges ── */}
+        <Animated.View entering={FadeIn.delay(100).duration(400)} style={styles.badgeRow}>
+          <View style={styles.badge}>
+            <Ionicons name="folder-outline" size={13} color={colors.yellow} />
+            <Text style={styles.badgeText}>{stats?.total_cases ?? 0} Cases</Text>
+          </View>
+          <View style={[styles.badge, styles.badgePrimary]}>
+            <Ionicons name="radio-button-on" size={10} color={colors.primary} />
+            <Text style={[styles.badgeText, styles.badgePrimaryText]}>Live Data</Text>
+          </View>
+          <View style={styles.badge}>
+            <Ionicons name="sync-outline" size={13} color={colors.textSecondary} />
+            <Text style={styles.badgeText}>Auto-sync</Text>
+          </View>
+        </Animated.View>
+
+        {/* ── KPI Cards ── */}
+        <SectionHeader title="Key Performance Indicators" />
+        <View style={styles.kpiRow}>
+          <KPIBox
+            title="Working Capital"
+            value={workingCapital !== null ? formatCurrency(workingCapital) : '–'}
+            subtitle="Net current position"
+            icon="wallet-outline"
+            iconColor={colors.primary}
+            trend={changeWC !== null ? (changeWC >= 0 ? 'up' : 'down') : undefined}
+            trendValue={changeWC !== null ? `${changeWC >= 0 ? '+' : ''}${formatCurrency(changeWC)}` : undefined}
+            delay={200}
+          />
+          <KPIBox
+            title="Current Ratio"
+            value={currentRatio !== null ? currentRatio.toFixed(2) : '–'}
+            subtitle={currentRatio !== null ? (currentRatio >= 1.5 ? 'Healthy' : 'Watch closely') : 'No data yet'}
+            icon="analytics-outline"
+            iconColor={currentRatio !== null && currentRatio >= 1.5 ? colors.green : colors.yellow}
+            trend={currentRatio !== null ? (currentRatio >= 1.5 ? 'up' : 'down') : undefined}
+            trendValue={currentRatio !== null ? (currentRatio >= 1.5 ? 'Strong' : 'Weak') : undefined}
+            delay={300}
+          />
+        </View>
+        <View style={styles.kpiRowSingle}>
+          <KPIBox
+            title="Change in Working Capital"
+            value={changeWC !== null ? formatCurrency(Math.abs(changeWC)) : '–'}
+            subtitle="vs previous period"
+            icon="swap-vertical-outline"
+            iconColor={changeWC !== null && changeWC >= 0 ? colors.green : colors.error}
+            trend={changeWC !== null ? (changeWC >= 0 ? 'up' : 'down') : undefined}
+            trendValue={changeWC !== null ? (changeWC >= 0 ? 'Improved' : 'Declined') : undefined}
+            delay={400}
+          />
         </View>
 
-        {/* Stats Badges */}
-        <View style={styles.badgeRow}>
-          <View style={styles.badge}>
-            <Ionicons name="folder-outline" size={14} color={colors.yellow} />
-            <Text style={styles.badgeText}>{stats?.total_cases || 0} Total Cases</Text>
-          </View>
-          <View style={[styles.badge, styles.badgeGreen]}>
-            <Ionicons name="radio-button-on" size={10} color={colors.green} />
-            <Text style={styles.badgeText}>Live Data</Text>
-          </View>
-          <View style={styles.badge}>
-            <Ionicons name="checkmark" size={14} color={colors.green} />
-            <Text style={styles.badgeText}>Syncing...</Text>
-          </View>
-        </View>
+        {/* ── Working Capital Trend Chart ── */}
+        <SectionHeader title="Working Capital Trend" color={colors.primary} />
+        <ChartCard
+          title="WC Over Time"
+          subtitle={latestWC ? 'Based on analysis history' : 'Sample data – run an analysis to see real data'}
+          delay={500}
+        >
+          <LineChart
+            data={PLACEHOLDER_LINE_DATA}
+            width={CHART_WIDTH}
+            height={160}
+            color={colors.chartLine}
+            thickness={2.5}
+            dataPointsColor={colors.primaryDark}
+            dataPointsRadius={4}
+            startFillColor={colors.primaryLight}
+            endFillColor="transparent"
+            areaChart
+            curved
+            rulesColor={colors.chartGrid}
+            rulesType="solid"
+            xAxisColor={colors.cardBorder}
+            yAxisColor="transparent"
+            yAxisTextStyle={styles.chartLabel}
+            xAxisLabelTextStyle={styles.chartLabel}
+            hideDataPoints={false}
+            noOfSections={4}
+            maxValue={700000}
+            formatYLabel={(val) => `₹${(Number(val) / 1000).toFixed(0)}K`}
+          />
+        </ChartCard>
 
-        {/* Case Overview */}
-        <SectionHeader title="Case Overview" color={colors.primary} />
-        <Card>
-          <View style={styles.overviewRow}>
-            <View style={styles.overviewItem}>
-              <Ionicons name="folder-outline" size={20} color={colors.textSecondary} />
-              <Text style={styles.overviewValue}>{stats?.total_cases || 0}</Text>
-              <Text style={styles.overviewLabel}>Total Cases</Text>
-            </View>
-          </View>
-        </Card>
+        {/* ── Monthly Changes Bar Chart ── */}
+        <SectionHeader title="Monthly WC Changes" color={colors.green} />
+        <ChartCard
+          title="Month-on-Month Δ Working Capital"
+          subtitle="Green = increase · Red = decrease"
+          delay={600}
+        >
+          <BarChart
+            data={PLACEHOLDER_BAR_DATA}
+            width={CHART_WIDTH}
+            height={160}
+            barWidth={30}
+            barBorderRadius={4}
+            noOfSections={4}
+            rulesColor={colors.chartGrid}
+            rulesType="solid"
+            xAxisColor={colors.cardBorder}
+            yAxisColor="transparent"
+            yAxisTextStyle={styles.chartLabel}
+            xAxisLabelTextStyle={styles.chartLabel}
+            showReferenceLine1
+            referenceLine1Position={0}
+            referenceLine1Config={{ color: colors.textMuted, thickness: 1, type: 'dashed' } as any}
+            formatYLabel={(val) => `₹${(Number(val) / 1000).toFixed(0)}K`}
+            isAnimated
+          />
+        </ChartCard>
 
-        {/* Analysis Cards */}
+        {/* ── Current Assets ── */}
+        <SectionHeader title="Current Assets Breakdown" color={colors.primary} />
+        <DataTable rows={assetsTableRows} />
+
+        {/* ── Current Liabilities ── */}
+        <SectionHeader title="Current Liabilities Breakdown" color={colors.error} />
+        <DataTable rows={liabilitiesTableRows} />
+
+        {/* ── Analysis Summary Cards ── */}
+        <SectionHeader title="Analysis Overview" color={colors.yellow} />
         <View style={styles.analysisRow}>
-          <TouchableOpacity style={styles.analysisCard} onPress={() => router.push('/wc')}>
-            <Ionicons name="bar-chart-outline" size={20} color={colors.yellow} />
-            <Text style={styles.analysisValue}>{stats?.wc_analysis_count || 0}</Text>
-            <Text style={styles.analysisLabel}>WC Analysis</Text>
+          <TouchableOpacity style={styles.analysisCard} onPress={() => router.push('/wc')} activeOpacity={0.8}>
+            <View style={[styles.analysisIcon, { backgroundColor: `${colors.yellow}20` }]}>
+              <Ionicons name="bar-chart-outline" size={20} color={colors.yellow} />
+            </View>
+            <Text style={styles.analysisValue}>{stats?.wc_analysis_count ?? 0}</Text>
+            <Text style={styles.analysisLabel}>WC Analyses</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.analysisCard, styles.analysisCardGreen]} onPress={() => router.push('/banking')}>
-            <Ionicons name="business-outline" size={20} color={colors.green} />
-            <Text style={styles.analysisValue}>{stats?.banking_count || 0}</Text>
+          <TouchableOpacity
+            style={[styles.analysisCard, { borderColor: `${colors.primary}30` }]}
+            onPress={() => router.push('/banking')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.analysisIcon, { backgroundColor: `${colors.primary}20` }]}>
+              <Ionicons name="business-outline" size={20} color={colors.primary} />
+            </View>
+            <Text style={styles.analysisValue}>{stats?.banking_count ?? 0}</Text>
             <Text style={styles.analysisLabel}>Banking</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.analysisCard, styles.analysisCardCyan]} onPress={() => router.push('/trend')}>
-            <Ionicons name="trending-up-outline" size={20} color={colors.cyan} />
-            <Text style={styles.analysisValue}>{stats?.multi_year_count || 0}</Text>
+          <TouchableOpacity
+            style={[styles.analysisCard, { borderColor: `${colors.cyan}30` }]}
+            onPress={() => router.push('/trend')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.analysisIcon, { backgroundColor: `${colors.cyan}20` }]}>
+              <Ionicons name="trending-up-outline" size={20} color={colors.cyan} />
+            </View>
+            <Text style={styles.analysisValue}>{stats?.multi_year_count ?? 0}</Text>
             <Text style={styles.analysisLabel}>Multi-Year</Text>
           </TouchableOpacity>
         </View>
 
-        {/* WC Trend */}
-        <SectionHeader title="Working Capital Trend" color={colors.yellow} />
-        <Card style={styles.trendCard}>
-          <Ionicons name="bar-chart-outline" size={32} color={colors.textMuted} />
-          <Text style={styles.noDataTitle}>No WC data yet</Text>
-          <Text style={styles.noDataText}>Run a Working Capital analysis to see trends</Text>
-          <TouchableOpacity style={styles.analyseButton} onPress={() => router.push('/wc')}>
-            <Text style={styles.analyseButtonText}>Analyse Now</Text>
-            <Ionicons name="arrow-forward" size={14} color={colors.primary} />
-          </TouchableOpacity>
-        </Card>
-
-        {/* Banking Trend */}
-        <SectionHeader title="Banking Performance Trend" color={colors.green} />
-        <Card style={styles.trendCard}>
-          <Ionicons name="business-outline" size={32} color={colors.textMuted} />
-          <Text style={styles.noDataTitle}>No banking data yet</Text>
-          <Text style={styles.noDataText}>Run a Banking Performance analysis to see scores</Text>
-          <TouchableOpacity style={styles.analyseButton} onPress={() => router.push('/banking')}>
-            <Text style={styles.analyseButtonText}>Analyse Now</Text>
-            <Ionicons name="arrow-forward" size={14} color={colors.primary} />
-          </TouchableOpacity>
-        </Card>
-
-        {/* Recent Activity */}
-        <SectionHeader title="Recent Activity" color={colors.purple} />
-        <Card style={styles.trendCard}>
-          <Ionicons name="time-outline" size={32} color={colors.textMuted} />
-          <Text style={styles.noDataTitle}>No cases yet</Text>
-          <Text style={styles.noDataText}>Upload a financial document in any module to begin analysis</Text>
-          <TouchableOpacity style={styles.analyseButton} onPress={() => router.push('/wc')}>
-            <Text style={styles.analyseButtonText}>Start Analysis</Text>
-            <Ionicons name="arrow-forward" size={14} color={colors.primary} />
-          </TouchableOpacity>
-        </Card>
-
-        {/* Quick Actions */}
+        {/* ── Quick Actions ── */}
         <SectionHeader title="Quick Actions" color={colors.cyan} />
-        <View style={styles.quickActionsRow}>
-          <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/wc')}>
-            <Ionicons name="bar-chart-outline" size={16} color={colors.yellow} />
+        <View style={styles.quickActionsGrid}>
+          <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/wc')} activeOpacity={0.8}>
+            <Ionicons name="bar-chart-outline" size={18} color={colors.yellow} />
             <Text style={styles.quickActionText}>WC Analysis</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/banking')}>
-            <Ionicons name="business-outline" size={16} color={colors.green} />
+          <TouchableOpacity
+            style={[styles.quickAction, { borderColor: `${colors.primary}40` }]}
+            onPress={() => router.push('/banking')}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="business-outline" size={18} color={colors.primary} />
             <Text style={styles.quickActionText}>Banking</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickAction, { borderColor: `${colors.cyan}40` }]}
+            onPress={() => router.push('/trend')}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="trending-up-outline" size={18} color={colors.cyan} />
+            <Text style={styles.quickActionText}>Multi-Year Trend</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickAction, { borderColor: `${colors.orange}40` }]}
+            onPress={() => router.push('/cases')}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="folder-outline" size={18} color={colors.orange} />
+            <Text style={styles.quickActionText}>Saved Cases</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.quickActionFull} onPress={() => router.push('/trend')}>
-          <Ionicons name="trending-up-outline" size={16} color={colors.cyan} />
-          <Text style={styles.quickActionText}>Multi-Year</Text>
-        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -174,6 +364,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
+    paddingBottom: 32,
   },
   header: {
     flexDirection: 'row',
@@ -184,14 +375,14 @@ const styles = StyleSheet.create({
   brandName: {
     color: colors.primary,
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
     letterSpacing: 2,
     marginBottom: 4,
   },
   title: {
     color: colors.text,
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 26,
+    fontWeight: '800',
     marginBottom: 2,
   },
   date: {
@@ -200,6 +391,8 @@ const styles = StyleSheet.create({
   },
   refreshButton: {
     padding: 8,
+    backgroundColor: colors.primaryLight,
+    borderRadius: 20,
   },
   badgeRow: {
     flexDirection: 'row',
@@ -210,36 +403,37 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     backgroundColor: colors.cardBackground,
     borderRadius: 20,
     paddingHorizontal: 10,
     paddingVertical: 5,
-  },
-  badgeGreen: {
     borderWidth: 1,
-    borderColor: colors.green,
+    borderColor: colors.cardBorder,
+  },
+  badgePrimary: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryLight,
   },
   badgeText: {
     color: colors.textSecondary,
     fontSize: 11,
+    fontWeight: '500',
   },
-  overviewRow: {
+  badgePrimaryText: {
+    color: colors.primary,
+  },
+  kpiRow: {
     flexDirection: 'row',
-    justifyContent: 'center',
+    gap: 12,
+    marginBottom: 12,
   },
-  overviewItem: {
-    alignItems: 'center',
-    gap: 4,
+  kpiRowSingle: {
+    marginBottom: 20,
   },
-  overviewValue: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  overviewLabel: {
-    color: colors.textSecondary,
-    fontSize: 12,
+  chartLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
   },
   analysisRow: {
     flexDirection: 'row',
@@ -249,90 +443,51 @@ const styles = StyleSheet.create({
   analysisCard: {
     flex: 1,
     backgroundColor: colors.cardBackground,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: colors.yellow + '40',
+    borderColor: `${colors.yellow}30`,
   },
-  analysisCardGreen: {
-    borderColor: colors.green + '40',
-  },
-  analysisCardCyan: {
-    borderColor: colors.cyan + '40',
+  analysisIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
   },
   analysisValue: {
     color: colors.text,
-    fontSize: 20,
-    fontWeight: '700',
-    marginTop: 6,
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 2,
   },
   analysisLabel: {
     color: colors.textSecondary,
     fontSize: 11,
-    marginTop: 2,
-  },
-  trendCard: {
-    alignItems: 'center',
-    paddingVertical: 24,
-  },
-  noDataTitle: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    fontWeight: '600',
-    marginTop: 12,
-  },
-  noDataText: {
-    color: colors.textMuted,
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  analyseButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 16,
-    backgroundColor: colors.inputBackground,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  analyseButtonText: {
-    color: colors.primary,
-    fontSize: 13,
     fontWeight: '500',
   },
-  quickActionsRow: {
-    flexDirection: 'row',
+  quickActionsGrid: {
     gap: 10,
-    marginBottom: 10,
-  },
-  quickAction: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.cardBackground,
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-  },
-  quickActionFull: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.cardBackground,
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
     marginBottom: 20,
   },
+  quickAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.cardBackground,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: `${colors.yellow}40`,
+  },
   quickActionText: {
+    flex: 1,
     color: colors.text,
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
+
+

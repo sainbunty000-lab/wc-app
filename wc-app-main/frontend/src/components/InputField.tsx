@@ -60,6 +60,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     minWidth: 100,
     textAlign: 'right',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
   },
   inputDisabled: {
     opacity: 0.6,

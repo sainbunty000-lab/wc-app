@@ -7,7 +7,7 @@ interface SectionHeaderProps {
   color?: string;
 }
 
-export const SectionHeader: React.FC<SectionHeaderProps> = ({ title, color = colors.yellow }) => {
+export const SectionHeader: React.FC<SectionHeaderProps> = ({ title, color = colors.primary }) => {
   return (
     <View style={styles.container}>
       <View style={[styles.indicator, { backgroundColor: color }]} />
@@ -30,10 +30,10 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   title: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.8,
   },
 });
