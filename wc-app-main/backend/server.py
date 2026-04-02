@@ -945,7 +945,11 @@ def _rule_based_insights(normalized_data: Dict[str, Any], metrics: Dict[str, Any
         f"{'Profitability is satisfactory.' if margin_ok else 'Profitability requires improvement.'}"
     )
 
-    # Confidence based on how many metrics are available and pass thresholds
+    # Confidence based on how many metrics are available and pass thresholds.
+    # Baseline: 0.50 (50%) when no signals are present.
+    # Each available metric adds 0.07 (7%), capped implicitly by the max of 5 signals → 0.85.
+    _CONFIDENCE_BASELINE = 0.50
+    _CONFIDENCE_PER_SIGNAL = 0.07
     confidence_signals = sum([
         current_ratio is not None,
         quick_ratio is not None,
@@ -953,7 +957,7 @@ def _rule_based_insights(normalized_data: Dict[str, Any], metrics: Dict[str, Any
         gross_margin is not None,
         working_capital is not None,
     ])
-    confidence = round(0.50 + confidence_signals * 0.07, 2)
+    confidence = round(_CONFIDENCE_BASELINE + confidence_signals * _CONFIDENCE_PER_SIGNAL, 2)
 
     return {
         "eligibility_status": eligibility_status,
@@ -1187,10 +1191,17 @@ async def analyze_trends(data: MultiYearInput):
     try:
         result = calculate_multi_year_trends(data)
 
-        # Generate AI insights for the multi-year data using the latest year's metrics
+        # Generate AI insights for the multi-year data using the latest year's metrics.
+        # Merge balance sheet and P&L dicts explicitly to avoid silent key overwrites.
         if result.growth_trends:
             latest_year = data.years_data[-1]
-            combined_raw = {**latest_year.balance_sheet.dict(), **latest_year.profit_loss.dict()}
+            bs_dict = latest_year.balance_sheet.dict()
+            pl_dict = latest_year.profit_loss.dict()
+            # Report any key overlap to the logger so it is visible in logs
+            overlap = set(bs_dict) & set(pl_dict)
+            if overlap:
+                logger.warning("Balance sheet / P&L key overlap in multi-year AI merge: %s", overlap)
+            combined_raw: Dict[str, Any] = {**bs_dict, **pl_dict}
             normalized = normalize_financial_data(combined_raw)
             latest_metrics = calculate_metrics(normalized)
             # Enrich metrics with growth context
@@ -1233,17 +1244,18 @@ async def analyze_financial(data: FlexibleFinancialInput):
             normalized_data, metrics, company_name=data.company_name
         )
 
-        # 4. Build result — extract confidence from analysis if present
+        # 4. Build result — extract confidence from analysis without mutating the dict
         clean_normalized = {
             k: v for k, v in normalized_data.items() if not k.startswith("_")
         }
-        confidence = analysis.pop("confidence", None)
+        confidence = analysis.get("confidence")
+        analysis_without_confidence = {k: v for k, v in analysis.items() if k != "confidence"}
         result = FinancialAnalysisResult(
             company_name=data.company_name,
             year=data.year,
             normalized_data=clean_normalized,
             metrics=metrics,
-            analysis=analysis,
+            analysis=analysis_without_confidence,
             confidence=confidence,
         )
 

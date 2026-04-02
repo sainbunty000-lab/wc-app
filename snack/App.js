@@ -380,13 +380,12 @@ function EligibilityBadge({ status, confidence, animStyle }) {
   const border     = isEligible ? '#A5D6A7' : isConditional ? '#FFD54F' : '#FFCDD2';
   const textColor  = isEligible ? colors.green : isConditional ? colors.yellow : colors.red;
   const icon       = isEligible ? 'checkmark-circle' : isConditional ? 'alert-circle' : 'close-circle';
-  const label      = status ?? 'Unknown';
 
   return (
     <Animated.View style={[eb.wrap, animStyle]}>
       <View style={[eb.badge, { backgroundColor: bg, borderColor: border }]}>
         <Ionicons name={icon} size={30} color={textColor} />
-        <Text style={[eb.text, { color: textColor }]}>{label}</Text>
+        <Text style={[eb.text, { color: textColor }]}>{status ?? 'Unknown'}</Text>
       </View>
       <Text style={eb.sub}>Eligibility Status</Text>
       {confidence != null && (
@@ -1500,7 +1499,7 @@ function TrendScreen() {
                   .filter(([, v]) => v != null)
                   .map(([k, v]) => ({
                     label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-                    value: `${v > 0 ? '+' : ''}${v.toFixed(1)}%`,
+                    value: `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`,
                     valueColor: v >= 0 ? colors.green : colors.red,
                   }))
                 } />
