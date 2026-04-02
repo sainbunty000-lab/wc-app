@@ -23,7 +23,7 @@ export const ChartCard: React.FC<ChartCardProps> = ({ title, subtitle, children,
   useEffect(() => {
     opacity.value = withDelay(delay, withTiming(1, { duration: 500, easing: Easing.out(Easing.ease) }));
     translateY.value = withDelay(delay, withTiming(0, { duration: 500, easing: Easing.out(Easing.ease) }));
-  }, []);
+  }, [delay]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,

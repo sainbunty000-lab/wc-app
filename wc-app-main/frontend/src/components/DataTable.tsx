@@ -20,7 +20,7 @@ export const DataTable: React.FC<DataTableProps> = ({ rows, title }) => {
       {title ? <Text style={styles.tableTitle}>{title}</Text> : null}
       {rows.map((row, index) => (
         <View
-          key={index}
+          key={`${row.label}-${index}`}
           style={[
             styles.row,
             index % 2 === 0 && styles.rowAlt,

@@ -268,7 +268,8 @@ export default function DashboardScreen() {
             xAxisLabelTextStyle={styles.chartLabel}
             showReferenceLine1
             referenceLine1Position={0}
-            referenceLine1Config={{ color: colors.textMuted, thickness: 1, type: 'dashed' } as any}
+            // Type cast needed as gifted-charts type definitions don't include all config options
+            referenceLine1Config={{ color: colors.textMuted, thickness: 1, type: 'dashed' } as object}
             formatYLabel={(val) => `₹${(Number(val) / 1000).toFixed(0)}K`}
             isAnimated
           />

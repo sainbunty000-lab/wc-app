@@ -79,7 +79,7 @@ function AnimatedModuleCard({
     const delay = 200 + index * 80;
     opacity.value = withDelay(delay, withTiming(1, { duration: 400, easing: Easing.out(Easing.ease) }));
     translateY.value = withDelay(delay, withTiming(0, { duration: 400, easing: Easing.out(Easing.ease) }));
-  }, []);
+  }, [index]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
