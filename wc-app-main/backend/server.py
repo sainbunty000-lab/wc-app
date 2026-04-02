@@ -171,6 +171,9 @@ class MultiYearResult(BaseModel):
     analysis_type: str = "multi_year"
     growth_trends: Optional[Dict[str, Any]] = None
     patterns: Optional[Dict[str, str]] = None
+    growth_score: Optional[int] = None
+    trend_label: Optional[str] = None
+    trend_analysis: Optional[Dict[str, Any]] = None
 
 class Case(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -541,6 +544,57 @@ def calculate_banking_score(data: BankingInput) -> BankingResult:
         eligibility_status=eligibility_status,
     )
 
+def _calc_pct_change(first: float, last: float) -> float:
+    """Return percentage change from first to last value."""
+    if first == 0:
+        return 0.0
+    return round((last - first) / abs(first) * 100, 1)
+
+
+def _calc_growth_score(
+    revenue_growth: float,
+    profit_growth: float,
+    wc_growth: float,
+    patterns: Dict[str, str],
+) -> int:
+    """Compute a 0-100 growth health score."""
+    score = 100
+    if revenue_growth < 0:
+        score -= 30
+    elif revenue_growth < 5:
+        score -= 10
+    if profit_growth < 0:
+        score -= 30
+    elif profit_growth < 5:
+        score -= 10
+    if wc_growth < 0:
+        score -= 20
+    if patterns.get("revenue") == "volatile":
+        score -= 10
+    if patterns.get("net_profit") == "volatile":
+        score -= 10
+    return max(0, min(100, score))
+
+
+def _detect_trend_label(
+    patterns: Dict[str, str],
+    revenue_growth: float,
+    profit_growth: float,
+) -> str:
+    """Determine overall trend label from patterns and growth rates."""
+    rev_pat = patterns.get("revenue", "")
+    profit_pat = patterns.get("net_profit", "")
+    if rev_pat == "volatile" or profit_pat == "volatile":
+        return "Volatile Performance"
+    if rev_pat == "growing" and profit_pat == "growing":
+        return "Strong Growth"
+    if rev_pat == "declining" or profit_pat == "declining":
+        return "Declining Trend"
+    if revenue_growth > 0 and profit_growth > 0:
+        return "Consistent Growth"
+    return "Stable Performance"
+
+
 def calculate_multi_year_trends(data: MultiYearInput) -> MultiYearResult:
     years = [yd.year for yd in data.years_data]
     
@@ -626,6 +680,42 @@ def calculate_multi_year_trends(data: MultiYearInput) -> MultiYearResult:
 
     growth_trend_data = calculate_growth_trends(year_metrics_list)
 
+    patterns_dict: Dict[str, str] = growth_trend_data.get("patterns") or {}
+    rev_list = trends["revenue"]
+    profit_list = trends["net_profit"]
+    wc_list = trends["net_working_capital"]
+
+    revenue_growth = _calc_pct_change(rev_list[0], rev_list[-1]) if len(rev_list) >= 2 else 0.0
+    profit_growth = _calc_pct_change(profit_list[0], profit_list[-1]) if len(profit_list) >= 2 else 0.0
+    wc_growth = _calc_pct_change(wc_list[0], wc_list[-1]) if len(wc_list) >= 2 else 0.0
+
+    growth_score = _calc_growth_score(revenue_growth, profit_growth, wc_growth, patterns_dict)
+    trend_label = _detect_trend_label(patterns_dict, revenue_growth, profit_growth)
+
+    if growth_score >= 70:
+        eligibility_status = "Eligible"
+    elif growth_score >= 45:
+        eligibility_status = "Conditional"
+    else:
+        eligibility_status = "Not Eligible"
+
+    trend_analysis: Dict[str, Any] = {
+        "years": years,
+        "revenue": rev_list,
+        "profit": profit_list,
+        "working_capital": wc_list,
+        "metrics": {
+            "revenue_growth": revenue_growth,
+            "profit_growth": profit_growth,
+            "wc_growth": wc_growth,
+        },
+        "analysis": {
+            "eligibility_status": eligibility_status,
+            "summary": recommendation,
+            "insights": insights,
+        },
+    }
+
     return MultiYearResult(
         company_name=data.company_name,
         input_data={"years_data": [yd.dict() for yd in data.years_data]},
@@ -634,7 +724,10 @@ def calculate_multi_year_trends(data: MultiYearInput) -> MultiYearResult:
         insights=insights,
         recommendation=recommendation,
         growth_trends=growth_trend_data,
-        patterns=growth_trend_data.get("patterns"),
+        patterns=patterns_dict,
+        growth_score=growth_score,
+        trend_label=trend_label,
+        trend_analysis=trend_analysis,
     )
 
 # ===================== AI DOCUMENT PARSING =====================

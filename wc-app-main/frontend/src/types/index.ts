@@ -133,6 +133,30 @@ export interface MultiYearResult {
   insights: string[];
   recommendation: string;
   analysis_type: string;
+  growth_score?: number;
+  trend_label?: string;
+  trend_analysis?: {
+    years: string[];
+    revenue: number[];
+    profit: number[];
+    working_capital: number[];
+    metrics: {
+      revenue_growth: number;
+      profit_growth: number;
+      wc_growth: number;
+    };
+    analysis: {
+      eligibility_status: string;
+      summary: string;
+      insights: string[];
+    };
+  };
+  growth_trends?: {
+    yoy_growth: Record<string, number[]>;
+    cagr: Record<string, number | null>;
+    patterns: Record<string, string>;
+  };
+  patterns?: Record<string, string>;
 }
 
 export interface Case {

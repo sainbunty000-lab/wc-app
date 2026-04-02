@@ -44,4 +44,6 @@ export const colors = {
   chartBar: '#81C784',
   chartBarAlt: '#A5D6A7',
   chartGrid: '#E2EDE2',
+  // Table
+  tableRowAlt: '#FAFFFE',
 };
