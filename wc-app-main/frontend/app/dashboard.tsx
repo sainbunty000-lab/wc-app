@@ -7,6 +7,8 @@ import {
   RefreshControl,
   TouchableOpacity,
   Dimensions,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -24,6 +26,8 @@ import { colors } from '../src/theme/colors';
 import { Card, SectionHeader, KPIBox, ChartCard, DataTable } from '../src/components';
 import { getDashboardStats } from '../src/api';
 import { DashboardStats } from '../src/types';
+import { useAppStore } from '../src/store';
+import { generatePDF } from '../src/services/pdfGenerator';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CHART_WIDTH = SCREEN_WIDTH - 64; // account for padding + card padding
@@ -55,9 +59,11 @@ const formatCurrency = (value: number): string => {
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const { wcResult, bankingResult, trendResult } = useAppStore();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [generatingPDF, setGeneratingPDF] = useState(false);
 
   // Header fade-in animation
   const headerOpacity = useSharedValue(0);
@@ -139,6 +145,22 @@ export default function DashboardScreen() {
       valueColor: colors.error,
     },
   ];
+
+  const handleGeneratePDF = async () => {
+    setGeneratingPDF(true);
+    try {
+      await generatePDF({
+        wcResult,
+        bankingResult,
+        trendResult,
+        companyName: wcResult?.company_name || bankingResult?.company_name || trendResult?.company_name,
+      });
+    } catch (err: any) {
+      Alert.alert('PDF Error', err?.message || 'Failed to generate PDF. Please ensure you have run at least one analysis and try again.');
+    } finally {
+      setGeneratingPDF(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -353,6 +375,25 @@ export default function DashboardScreen() {
             <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
+
+        {/* ── Generate PDF Report ── */}
+        <SectionHeader title="Reports" color={colors.purple} />
+        <TouchableOpacity
+          style={[styles.pdfButton, generatingPDF && styles.pdfButtonDisabled]}
+          onPress={handleGeneratePDF}
+          activeOpacity={0.8}
+          disabled={generatingPDF}
+        >
+          {generatingPDF ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="document-text-outline" size={20} color="#fff" />
+          )}
+          <Text style={styles.pdfButtonText}>
+            {generatingPDF ? 'Generating PDF…' : 'Generate & Share PDF Report'}
+          </Text>
+          {!generatingPDF && <Ionicons name="share-outline" size={18} color="#fff" />}
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -488,6 +529,26 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 14,
     fontWeight: '600',
+  },
+  pdfButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: colors.purple,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  pdfButtonDisabled: {
+    opacity: 0.7,
+  },
+  pdfButtonText: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });
 
