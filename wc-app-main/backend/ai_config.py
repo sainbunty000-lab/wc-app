@@ -5,19 +5,33 @@ logger = logging.getLogger(__name__)
 
 
 def get_ai_config():
-    """Detect the available AI provider from environment variables."""
+    """
+    Detect the available AI provider from environment variables.
 
-    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-    ai_integrations_key = os.getenv("AI_INTEGRATIONS_GEMINI_API_KEY", "").strip()  # ✅ ADD THIS
-    emergent_key = os.getenv("EMERGENT_LLM_KEY", "").strip()
+    Priority order:
+        1. GEMINI_API_KEY
+        2. AI_INTEGRATIONS_GEMINI_API_KEY  (Railway / custom env)
+        3. EMERGENT_LLM_KEY               (backward compatibility)
+        4. OPENAI_API_KEY
+
+    Returns:
+        (provider_name, api_key)
+    """
+
+    # ✅ Support ALL possible variable names (VERY IMPORTANT)
+    gemini_key = (
+        os.getenv("GEMINI_API_KEY") or
+        os.getenv("AI_INTEGRATIONS_GEMINI_API_KEY") or
+        os.getenv("EMERGENT_LLM_KEY") or
+        ""
+    ).strip()
+
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
 
+    # ✅ Priority logic
     if gemini_key:
         return "gemini", gemini_key
-    if ai_integrations_key:  # ✅ ADD THIS
-        return "gemini", ai_integrations_key
-    if emergent_key:
-        return "gemini", emergent_key
+
     if openai_key:
         return "openai", openai_key
 
@@ -25,7 +39,15 @@ def get_ai_config():
 
 
 def log_ai_status():
+    """
+    Print and log the detected AI provider.
+    Call this once at app startup.
+    """
     provider, key = get_ai_config()
-    print(f"AI Provider: {provider}")
+
+    print("🔍 AI DEBUG ------------------------")
+    print(f"Provider: {provider}")
     print(f"Key Loaded: {bool(key)}")
+    print("-----------------------------------")
+
     logger.info("AI Provider: %s | Key Loaded: %s", provider, bool(key))
