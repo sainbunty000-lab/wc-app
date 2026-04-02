@@ -19,6 +19,9 @@ import io
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+from financial_mapper import normalize_financial_data, detect_document_type
+from financial_calculator import calculate_metrics, calculate_growth_trends
+
 # Configure logging FIRST (before any logger usage)
 logging.basicConfig(
     level=logging.INFO,
@@ -155,6 +158,8 @@ class MultiYearResult(BaseModel):
     insights: List[str]
     recommendation: str
     analysis_type: str = "multi_year"
+    growth_trends: Optional[Dict[str, Any]] = None
+    patterns: Optional[Dict[str, str]] = None
 
 class Case(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -162,6 +167,22 @@ class Case(BaseModel):
     analysis_type: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     data: Dict[str, Any]
+
+class FlexibleFinancialInput(BaseModel):
+    """Accepts financial data with any field names and normalizes automatically."""
+    company_name: str = "Company"
+    financial_data: Dict[str, Any]
+    year: Optional[str] = None
+
+class FinancialAnalysisResult(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_name: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    year: Optional[str] = None
+    normalized_data: Dict[str, Any]
+    metrics: Dict[str, Any]
+    analysis: Dict[str, Any]
+    analysis_type: str = "financial_analysis"
 
 # ===================== HELPER FUNCTIONS =====================
 
@@ -459,14 +480,27 @@ def calculate_multi_year_trends(data: MultiYearInput) -> MultiYearResult:
         recommendation = "Multi-year analysis shows mixed signals. Some metrics improving while others need attention. Recommend focused improvement in weak areas."
     else:
         recommendation = "Multi-year analysis indicates challenges in financial performance. Comprehensive business review recommended before financing decisions."
-    
+
+    # Enhanced growth trend analysis
+    year_metrics_list = []
+    for yd in data.years_data:
+        bs = yd.balance_sheet
+        pl = yd.profit_loss
+        combined_raw = {**bs.dict(), **pl.dict()}
+        normalized = normalize_financial_data(combined_raw)
+        year_metrics_list.append(calculate_metrics(normalized))
+
+    growth_trend_data = calculate_growth_trends(year_metrics_list)
+
     return MultiYearResult(
         company_name=data.company_name,
         input_data={"years_data": [yd.dict() for yd in data.years_data]},
         years=years,
         trends=trends,
         insights=insights,
-        recommendation=recommendation
+        recommendation=recommendation,
+        growth_trends=growth_trend_data,
+        patterns=growth_trend_data.get("patterns"),
     )
 
 # ===================== AI DOCUMENT PARSING =====================
@@ -515,8 +549,9 @@ Return ONLY a valid JSON object with these exact keys (use 0 if value not found)
 }
 Return only the JSON object, no explanations or markdown."""
     else:
-        return """Analyze this financial document and extract all numerical financial data you can find.
-Return ONLY a valid JSON object with the extracted key-value pairs. Use descriptive keys.
+        return """Analyze this financial document and extract ALL numerical financial data you can find.
+Return ONLY a valid JSON object with descriptive keys matching the exact field names from the document.
+Include all monetary values, ratios, and percentages with their natural names.
 Return only the JSON object, no explanations or markdown."""
 
 
@@ -655,6 +690,199 @@ async def analyze_document_with_ai(file_path: str, mime_type: str, document_type
         logger.error(f"AI document parse error: {e}")
         return {"success": False, "error": str(e), "parsed_data": {}}
 
+# ===================== AI TEXT ANALYSIS =====================
+
+async def _analyze_text_with_gemini(api_key: str, prompt: str) -> str:
+    """Call Gemini 2.5 Flash with a text-only prompt and return raw response."""
+    import google.genai as genai
+    from google.genai import types as genai_types
+
+    genai_client = genai.Client(api_key=api_key)
+    response = await genai_client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[genai_types.Content(parts=[genai_types.Part(text=prompt)])],
+        config=genai_types.GenerateContentConfig(
+            system_instruction=(
+                "You are a financial analysis expert. "
+                "Provide structured financial assessments in JSON format only."
+            )
+        ),
+    )
+    return response.text.strip()
+
+
+async def _analyze_text_with_openai(api_key: str, prompt: str) -> str:
+    """Call GPT-4o with a text-only prompt and return raw response."""
+    from openai import AsyncOpenAI
+
+    openai_client = AsyncOpenAI(api_key=api_key)
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a financial analysis expert. "
+                    "Provide structured financial assessments in JSON format only."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+    )
+    return response.choices[0].message.content.strip()
+
+
+def _rule_based_insights(normalized_data: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate basic insights without AI when no API key is configured."""
+    insights = []
+    strengths = []
+    risks = []
+    recommendations = []
+
+    current_ratio = metrics.get("current_ratio")
+    quick_ratio = metrics.get("quick_ratio")
+    net_margin = metrics.get("net_margin")
+    gross_margin = metrics.get("gross_margin")
+    debt_to_equity = metrics.get("debt_to_equity")
+    working_capital = metrics.get("working_capital")
+
+    if current_ratio is not None:
+        if current_ratio >= 2.0:
+            strengths.append(f"Strong liquidity with current ratio of {current_ratio}x (above 2.0x)")
+        elif current_ratio >= 1.33:
+            strengths.append(f"Adequate liquidity with current ratio of {current_ratio}x (above 1.33x benchmark)")
+        else:
+            risks.append(f"Current ratio of {current_ratio}x is below the 1.33x benchmark — liquidity concern")
+            recommendations.append("Improve short-term asset position to strengthen current ratio above 1.33x")
+
+    if quick_ratio is not None:
+        if quick_ratio >= 1.0:
+            strengths.append(f"Healthy quick ratio of {quick_ratio}x")
+        else:
+            risks.append(f"Quick ratio of {quick_ratio}x suggests potential liquidity pressure excluding inventory")
+
+    if net_margin is not None:
+        if net_margin >= 10:
+            strengths.append(f"Strong net profitability at {net_margin}%")
+        elif net_margin >= 5:
+            insights.append(f"Moderate net margin of {net_margin}% — room for improvement")
+        elif net_margin > 0:
+            risks.append(f"Low net margin of {net_margin}% — needs improvement")
+            recommendations.append("Focus on cost reduction or revenue growth to improve net margins")
+        else:
+            risks.append("Negative net margin indicates operating at a loss")
+            recommendations.append("Urgent review of cost structure and revenue streams required")
+
+    if gross_margin is not None:
+        if gross_margin >= 30:
+            strengths.append(f"Strong gross margin of {gross_margin}%")
+        elif gross_margin < 15:
+            risks.append(f"Low gross margin of {gross_margin}% — high cost of goods")
+
+    if debt_to_equity is not None:
+        if debt_to_equity <= 1.0:
+            strengths.append(f"Conservative leverage with debt-to-equity ratio of {debt_to_equity}x")
+        elif debt_to_equity <= 2.0:
+            insights.append(f"Moderate leverage with debt-to-equity ratio of {debt_to_equity}x")
+        else:
+            risks.append(f"High leverage with debt-to-equity ratio of {debt_to_equity}x")
+            recommendations.append("Consider debt reduction strategy to improve financial stability")
+
+    if working_capital is not None and working_capital > 0:
+        strengths.append(f"Positive working capital of {working_capital:,.0f}")
+    elif working_capital is not None and working_capital < 0:
+        risks.append("Negative working capital — current liabilities exceed current assets")
+
+    # Eligibility determination
+    current_ratio_ok = current_ratio is not None and current_ratio >= 1.33
+    margin_ok = net_margin is not None and net_margin >= 5
+    if current_ratio_ok and margin_ok:
+        eligibility_status = "Eligible"
+    elif current_ratio_ok or margin_ok:
+        eligibility_status = "Conditional"
+    else:
+        eligibility_status = "Not Eligible"
+
+    summary = (
+        f"Financial analysis indicates {eligibility_status.lower()} status. "
+        f"{'Liquidity metrics meet benchmark. ' if current_ratio_ok else 'Liquidity below benchmark. '}"
+        f"{'Profitability is satisfactory.' if margin_ok else 'Profitability requires improvement.'}"
+    )
+
+    return {
+        "eligibility_status": eligibility_status,
+        "summary": summary,
+        "insights": insights or ["Financial data analyzed with available metrics."],
+        "strengths": strengths or ["Financial data available for analysis."],
+        "risks": risks or ["No major risks identified from available data."],
+        "recommendations": recommendations or ["Continue monitoring key financial metrics regularly."],
+    }
+
+
+async def generate_financial_insights(
+    normalized_data: Dict[str, Any],
+    metrics: Dict[str, Any],
+    company_name: str = "the company",
+) -> Dict[str, Any]:
+    """
+    Use AI (or rule-based fallback) to generate structured financial insights.
+
+    Returns a dict with eligibility_status, summary, insights, strengths,
+    risks, and recommendations.
+    """
+    provider, api_key = get_ai_config()
+
+    if not api_key:
+        logger.info("No AI key configured — using rule-based insights fallback.")
+        return _rule_based_insights(normalized_data, metrics)
+
+    # Build a clean payload for the prompt (exclude internal/zero fields)
+    clean_normalized = {
+        k: v for k, v in normalized_data.items()
+        if not k.startswith("_") and v != 0
+    }
+    clean_metrics = {k: v for k, v in metrics.items() if v is not None}
+
+    prompt = f"""Analyze this company's financial data and provide a professional financial assessment.
+
+Company: {company_name}
+
+Normalized Financial Data:
+{json.dumps(clean_normalized, indent=2)}
+
+Calculated Metrics:
+{json.dumps(clean_metrics, indent=2)}
+
+Evaluate:
+1. Liquidity position and working capital adequacy
+2. Profitability and margin quality
+3. Financial risk and debt levels
+4. Overall financial health and eligibility for financing
+
+Return ONLY a valid JSON object with this exact structure:
+{{
+  "eligibility_status": "Eligible" or "Conditional" or "Not Eligible",
+  "summary": "Professional 2-3 sentence summary of the company's financial position",
+  "insights": ["key insight 1", "key insight 2", "key insight 3"],
+  "strengths": ["financial strength 1", "financial strength 2"],
+  "risks": ["financial risk 1", "financial risk 2"],
+  "recommendations": ["recommendation 1", "recommendation 2"]
+}}
+
+Return only the JSON object, no explanations or markdown."""
+
+    try:
+        if provider == "gemini":
+            response_text = await _analyze_text_with_gemini(api_key, prompt)
+        else:
+            response_text = await _analyze_text_with_openai(api_key, prompt)
+
+        logger.info(f"AI insights response ({provider}): {response_text[:300]}")
+        return _extract_json(response_text)
+    except Exception as e:
+        logger.error(f"AI insights generation error: {e} — falling back to rule-based")
+        return _rule_based_insights(normalized_data, metrics)
+
 # ===================== API ROUTES =====================
 
 @api_router.get("/")
@@ -715,18 +943,36 @@ async def parse_uploaded_file(
             result = await analyze_document_with_ai(tmp_path, mime_type, document_type)
         finally:
             os.unlink(tmp_path)
-        
+
         if result.get("success"):
+            parsed_data = result["parsed_data"]
+            # Auto-detect type if requested, otherwise use provided type
+            detected_type = (
+                detect_document_type(parsed_data)
+                if document_type == "auto"
+                else document_type
+            )
+            # Normalize the extracted data to the standard schema
+            normalized_data = normalize_financial_data(parsed_data)
+            # Remove internal keys from the response
+            clean_normalized = {
+                k: v for k, v in normalized_data.items()
+                if not k.startswith("_") and v != 0
+            }
             return {
                 "success": True,
-                "parsed_data": result["parsed_data"],
-                "message": "Document parsed successfully using AI Vision!"
+                "parsed_data": parsed_data,
+                "normalized_data": clean_normalized,
+                "detected_type": detected_type,
+                "message": "Document parsed successfully using AI Vision!",
             }
         else:
             return {
                 "success": False,
                 "parsed_data": {},
-                "message": result.get("error", "Could not extract data from document.")
+                "normalized_data": {},
+                "detected_type": "unknown",
+                "message": result.get("error", "Could not extract data from document."),
             }
         
     except Exception as e:
@@ -765,6 +1011,52 @@ async def analyze_trends(data: MultiYearInput):
         return result
     except Exception as e:
         logger.error(f"Trend Analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Flexible Financial Analysis
+@api_router.post("/analysis/financial", response_model=FinancialAnalysisResult)
+async def analyze_financial(data: FlexibleFinancialInput):
+    """
+    Accept financial data with ANY field names, normalize automatically,
+    calculate key metrics, generate AI-based insights, and store results.
+    """
+    try:
+        # 1. Normalize
+        normalized_data = normalize_financial_data(data.financial_data)
+
+        # 2. Calculate metrics
+        metrics = calculate_metrics(normalized_data)
+
+        # 3. Generate AI insights (with rule-based fallback)
+        analysis = await generate_financial_insights(
+            normalized_data, metrics, company_name=data.company_name
+        )
+
+        # 4. Build result
+        clean_normalized = {
+            k: v for k, v in normalized_data.items() if not k.startswith("_")
+        }
+        result = FinancialAnalysisResult(
+            company_name=data.company_name,
+            year=data.year,
+            normalized_data=clean_normalized,
+            metrics=metrics,
+            analysis=analysis,
+        )
+
+        # 5. Store in database (non-fatal if DB unavailable)
+        if db is not None:
+            try:
+                record = result.dict()
+                record["raw_data"] = data.financial_data
+                await db.financial_analyses.insert_one(record)
+            except Exception as db_err:
+                logger.warning(f"DB storage failed (non-fatal): {db_err}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Financial analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ===================== PDF EXPORT =====================
