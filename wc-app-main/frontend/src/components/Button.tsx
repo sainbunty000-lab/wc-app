@@ -35,7 +35,7 @@ export const Button: React.FC<ButtonProps> = ({
         activeOpacity={0.8}
       >
         <LinearGradient
-          colors={isDisabled ? ['#444', '#333'] : [colors.gradientStart, colors.gradientEnd]}
+          colors={isDisabled ? ['#A5D6A7', '#81C784'] : [colors.gradientStart, colors.gradientEnd]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={styles.gradient}
@@ -111,13 +111,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   secondaryButton: {
-    backgroundColor: colors.cardBackground,
+    backgroundColor: colors.inputBackground,
     borderWidth: 1,
     borderColor: colors.cardBorder,
   },
   outlineButton: {
     backgroundColor: 'transparent',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.primary,
   },
   dangerButton: {

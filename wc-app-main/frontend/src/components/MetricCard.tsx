@@ -12,7 +12,7 @@ interface MetricCardProps {
 export const MetricCard: React.FC<MetricCardProps> = ({
   value,
   label,
-  color = colors.yellow,
+  color = colors.primary,
   suffix = '',
 }) => {
   return (
@@ -30,7 +30,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.cardBackground,
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
