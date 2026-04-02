@@ -26,6 +26,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# AI provider detection — reads GEMINI_API_KEY / EMERGENT_LLM_KEY / OPENAI_API_KEY
+from ai_config import get_ai_config, log_ai_status
+log_ai_status()
+
 # MongoDB connection - with fallback for missing URL
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 try:
@@ -36,9 +40,6 @@ except Exception as e:
     logger.warning(f"MongoDB connection failed initially: {e}. Will retry on first request.")
     client = None
     db = None
-
-# Emergent LLM Key for Gemini Vision
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
 # Create the main app
 app = FastAPI(title="Financial Analytics API")
@@ -468,19 +469,12 @@ def calculate_multi_year_trends(data: MultiYearInput) -> MultiYearResult:
         recommendation=recommendation
     )
 
-# ===================== GEMINI VISION PARSING (via Emergent LLM) =====================
+# ===================== AI DOCUMENT PARSING =====================
 
-async def analyze_document_with_gemini(file_path: str, mime_type: str, document_type: str) -> Dict[str, Any]:
-    """Use Gemini Vision via Emergent LLM to extract financial data from documents"""
-    try:
-        if not EMERGENT_LLM_KEY:
-            logger.warning("EMERGENT_LLM_KEY not configured")
-            return {"success": False, "error": "AI key not configured", "parsed_data": {}}
-        
-        from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContentWithMimeType
-        
-        if document_type == "balance_sheet":
-            prompt = """Analyze this Balance Sheet document and extract the following financial values.
+def _build_extraction_prompt(document_type: str) -> str:
+    """Return the extraction prompt for the given document type."""
+    if document_type == "balance_sheet":
+        return """Analyze this Balance Sheet document and extract the following financial values.
 Return ONLY a valid JSON object with these exact keys (use 0 if value not found):
 {
     "current_assets": <number>,
@@ -491,8 +485,8 @@ Return ONLY a valid JSON object with these exact keys (use 0 if value not found)
     "cash_bank_balance": <number>
 }
 Return only the JSON object, no explanations or markdown."""
-        elif document_type == "profit_loss":
-            prompt = """Analyze this Profit & Loss Statement document and extract the following financial values.
+    elif document_type == "profit_loss":
+        return """Analyze this Profit & Loss Statement document and extract the following financial values.
 Return ONLY a valid JSON object with these exact keys (use 0 if value not found):
 {
     "revenue": <number>,
@@ -502,8 +496,8 @@ Return ONLY a valid JSON object with these exact keys (use 0 if value not found)
     "net_profit": <number>
 }
 Return only the JSON object, no explanations or markdown."""
-        elif document_type == "bank_statement":
-            prompt = """Analyze this Bank Statement document and extract the following financial values.
+    elif document_type == "bank_statement":
+        return """Analyze this Bank Statement document and extract the following financial values.
 Return ONLY a valid JSON object with these exact keys (use 0 if value not found):
 {
     "total_credits": <number>,
@@ -520,48 +514,145 @@ Return ONLY a valid JSON object with these exact keys (use 0 if value not found)
     "num_transactions": <number>
 }
 Return only the JSON object, no explanations or markdown."""
-        else:
-            prompt = """Analyze this financial document and extract all numerical financial data you can find.
+    else:
+        return """Analyze this financial document and extract all numerical financial data you can find.
 Return ONLY a valid JSON object with the extracted key-value pairs. Use descriptive keys.
 Return only the JSON object, no explanations or markdown."""
-        
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"parse-{uuid.uuid4()}",
-            system_message="You are a financial document analysis expert. Extract precise numerical values from financial documents. Always return valid JSON only."
+
+
+def _extract_json(response_text: str) -> Dict[str, Any]:
+    """Extract a JSON object from the AI response text, handling markdown fences and nesting."""
+    # Try the whole response directly
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strip markdown code fences then retry
+    cleaned = re.sub(r'```(?:json)?\s*', '', response_text).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Walk characters to find the first balanced JSON object (handles nesting)
+    brace_count = 0
+    start = None
+    for i, ch in enumerate(response_text):
+        if ch == '{':
+            if start is None:
+                start = i
+            brace_count += 1
+        elif ch == '}':
+            brace_count -= 1
+            if brace_count == 0 and start is not None:
+                return json.loads(response_text[start:i + 1])
+
+    raise json.JSONDecodeError("No valid JSON object found in AI response", response_text, 0)
+
+
+async def _parse_with_gemini(api_key: str, prompt: str, file_path: str, mime_type: str) -> str:
+    """Call Gemini 2.5 Flash via the google-genai SDK and return raw response text."""
+    import google.genai as genai
+    from google.genai import types as genai_types
+
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+
+    genai_client = genai.Client(api_key=api_key)
+    response = await genai_client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            genai_types.Content(parts=[
+                genai_types.Part(
+                    inline_data=genai_types.Blob(mime_type=mime_type, data=file_bytes)
+                ),
+                genai_types.Part(text=prompt),
+            ])
+        ],
+        config=genai_types.GenerateContentConfig(
+            system_instruction="You are a financial document analysis expert. Extract precise numerical values from financial documents. Always return valid JSON only."
+        ),
+    )
+    return response.text.strip()
+
+
+async def _parse_with_openai(api_key: str, prompt: str, file_path: str, mime_type: str) -> str:
+    """Call GPT-4o via the openai SDK and return raw response text.
+
+    Only image MIME types are supported (jpeg, png, webp, gif).
+    PDF and spreadsheet files are not supported through this path.
+    """
+    import base64
+    from openai import AsyncOpenAI
+
+    image_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    if mime_type not in image_types:
+        raise ValueError(
+            f"OpenAI vision does not support '{mime_type}'. "
+            "Set GEMINI_API_KEY for full PDF/spreadsheet support."
         )
-        chat.with_model("gemini", "gemini-2.5-flash")
-        
-        file_content = FileContentWithMimeType(
-            file_path=file_path,
-            mime_type=mime_type
-        )
-        
-        user_message = UserMessage(
-            text=prompt,
-            file_contents=[file_content]
-        )
-        
-        response = await chat.send_message(user_message)
-        response_text = response.strip()
-        
-        logger.info(f"Gemini response: {response_text[:500]}")
-        
-        # Extract JSON from response
-        json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
-        if json_match:
-            parsed_data = json.loads(json_match.group())
-            return {"success": True, "parsed_data": parsed_data, "raw_text": response_text}
-        
-        # Try parsing the whole response as JSON
-        parsed_data = json.loads(response_text)
+
+    with open(file_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode()
+
+    data_url = f"data:{mime_type};base64,{encoded}"
+    openai_client = AsyncOpenAI(api_key=api_key)
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    )
+    return response.choices[0].message.content.strip()
+
+
+async def analyze_document_with_ai(file_path: str, mime_type: str, document_type: str) -> Dict[str, Any]:
+    """Use AI Vision to extract financial data from uploaded documents.
+
+    Provider is selected automatically from environment variables:
+      GEMINI_API_KEY  → Gemini 2.5 Flash  (supports PDF, images, spreadsheets)
+      EMERGENT_LLM_KEY → Gemini 2.5 Flash (backward compat)
+      OPENAI_API_KEY  → GPT-4o Vision     (images only)
+    """
+    response_text = ""
+    try:
+        provider, api_key = get_ai_config()
+
+        if not api_key:
+            logger.warning("No AI API key configured. Set GEMINI_API_KEY or OPENAI_API_KEY.")
+            return {
+                "success": False,
+                "error": "No AI API key configured. Please set GEMINI_API_KEY or OPENAI_API_KEY in your environment variables.",
+                "parsed_data": {},
+            }
+
+        prompt = _build_extraction_prompt(document_type)
+
+        if provider == "gemini":
+            response_text = await _parse_with_gemini(api_key, prompt, file_path, mime_type)
+        else:
+            response_text = await _parse_with_openai(api_key, prompt, file_path, mime_type)
+
+        logger.info(f"AI response ({provider}): {response_text[:500]}")
+
+        parsed_data = _extract_json(response_text)
         return {"success": True, "parsed_data": parsed_data, "raw_text": response_text}
-        
+
     except json.JSONDecodeError as e:
         logger.error(f"JSON parse error: {e}")
-        return {"success": False, "error": "Could not parse AI response as JSON", "parsed_data": {}, "raw_text": response_text if 'response_text' in dir() else ""}
+        return {
+            "success": False,
+            "error": "Could not parse AI response as JSON",
+            "parsed_data": {},
+            "raw_text": response_text,
+        }
     except Exception as e:
-        logger.error(f"Gemini Vision Error: {e}")
+        logger.error(f"AI document parse error: {e}")
         return {"success": False, "error": str(e), "parsed_data": {}}
 
 # ===================== API ROUTES =====================
@@ -572,7 +663,13 @@ async def root():
 
 @api_router.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "ai_enabled": bool(EMERGENT_LLM_KEY)}
+    provider, key = get_ai_config()
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "ai_enabled": bool(key),
+        "ai_provider": provider,
+    }
 
 # Document Parsing via Gemini Vision
 @api_router.post("/parse/upload")
@@ -615,7 +712,7 @@ async def parse_uploaded_file(
             tmp_path = tmp.name
         
         try:
-            result = await analyze_document_with_gemini(tmp_path, mime_type, document_type)
+            result = await analyze_document_with_ai(tmp_path, mime_type, document_type)
         finally:
             os.unlink(tmp_path)
         
