@@ -133,6 +133,35 @@ export interface MultiYearResult {
   insights: string[];
   recommendation: string;
   analysis_type: string;
+  growth_trends?: {
+    yoy_growth: Record<string, (number | null)[]>;
+    cagr: Record<string, number | null>;
+    patterns: Record<string, string>;
+  };
+  patterns?: Record<string, string>;
+  ai_analysis?: FinancialAnalysis;
+}
+
+export interface FinancialAnalysis {
+  eligibility_status: string;
+  summary: string;
+  insights: string[];
+  strengths: string[];
+  risks: string[];
+  recommendations: string[];
+  confidence?: number;
+}
+
+export interface FinancialAnalysisResult {
+  id: string;
+  company_name: string;
+  timestamp: string;
+  year?: string;
+  normalized_data: Record<string, number>;
+  metrics: Record<string, number | null>;
+  analysis: FinancialAnalysis;
+  confidence?: number;
+  analysis_type: string;
 }
 
 export interface Case {

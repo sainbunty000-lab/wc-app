@@ -333,6 +333,84 @@ export default function TrendScreen() {
             <Card>
               <Text style={styles.recommendationText}>{result.recommendation}</Text>
             </Card>
+
+            {/* Growth Patterns */}
+            {result.patterns && Object.keys(result.patterns).length > 0 && (
+              <>
+                <SectionHeader title="Growth Patterns" color={colors.cyan} />
+                <Card>
+                  {Object.entries(result.patterns).map(([metric, pattern]) => {
+                    const isPositive = pattern === 'growing' || pattern === 'stable';
+                    const patternColor = isPositive ? colors.green : pattern === 'volatile' ? colors.orange : colors.red;
+                    return (
+                      <View key={metric} style={styles.insightRow}>
+                        <Ionicons
+                          name={isPositive ? 'trending-up' : pattern === 'volatile' ? 'swap-vertical-outline' : 'trending-down'}
+                          size={16}
+                          color={patternColor}
+                        />
+                        <Text style={[styles.insightText, { color: patternColor, fontWeight: '600' }]}>
+                          {metric.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}: {pattern}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </Card>
+              </>
+            )}
+
+            {/* AI Analysis */}
+            {result.ai_analysis && (
+              <>
+                <SectionHeader title="AI Eligibility Assessment" color={colors.primary} />
+                {/* Eligibility Badge */}
+                <Card>
+                  <View style={styles.eligibilityBadgeContainer}>
+                    <View style={[
+                      styles.eligibilityBadge,
+                      {
+                        backgroundColor: result.ai_analysis.eligibility_status === 'Eligible' ? `${colors.green}15` : result.ai_analysis.eligibility_status === 'Conditional' ? `${colors.yellow}15` : `${colors.red}15`,
+                        borderColor: result.ai_analysis.eligibility_status === 'Eligible' ? colors.green : result.ai_analysis.eligibility_status === 'Conditional' ? colors.yellow : colors.red,
+                      }
+                    ]}>
+                      <Ionicons
+                        name={result.ai_analysis.eligibility_status === 'Eligible' ? 'checkmark-circle' : result.ai_analysis.eligibility_status === 'Conditional' ? 'alert-circle' : 'close-circle'}
+                        size={28}
+                        color={result.ai_analysis.eligibility_status === 'Eligible' ? colors.green : result.ai_analysis.eligibility_status === 'Conditional' ? colors.yellow : colors.red}
+                      />
+                      <Text style={[
+                        styles.eligibilityText,
+                        { color: result.ai_analysis.eligibility_status === 'Eligible' ? colors.green : result.ai_analysis.eligibility_status === 'Conditional' ? colors.yellow : colors.red }
+                      ]}>
+                        {result.ai_analysis.eligibility_status}
+                      </Text>
+                    </View>
+                    {result.ai_analysis.confidence != null && (
+                      <Text style={styles.confidenceText}>
+                        Confidence: {Math.round(result.ai_analysis.confidence * 100)}%
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={styles.recommendationText}>{result.ai_analysis.summary}</Text>
+                </Card>
+                {/* Risks */}
+                {result.ai_analysis.risks && result.ai_analysis.risks.length > 0 &&
+                  result.ai_analysis.risks[0] !== 'No major risks identified from available data.' && (
+                  <Card>
+                    <View style={styles.insightRow}>
+                      <Ionicons name="warning" size={16} color={colors.red} />
+                      <Text style={[styles.insightText, { color: colors.red, fontWeight: '700' }]}>Risk Alerts</Text>
+                    </View>
+                    {result.ai_analysis.risks.map((risk, idx) => (
+                      <View key={idx} style={styles.insightRow}>
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.red, marginTop: 6 }} />
+                        <Text style={[styles.insightText, { color: colors.text }]}>{risk}</Text>
+                      </View>
+                    ))}
+                  </Card>
+                )}
+              </>
+            )}
           </>
         )}
 
@@ -481,6 +559,29 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
     lineHeight: 20,
+  },
+  eligibilityBadgeContainer: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  eligibilityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 40,
+    borderWidth: 1.5,
+    marginBottom: 8,
+  },
+  eligibilityText: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  confidenceText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
   },
   actionRow: {
     flexDirection: 'row',
