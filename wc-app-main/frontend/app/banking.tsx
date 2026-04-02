@@ -259,6 +259,8 @@ export default function BankingScreen() {
     return 'neutral';
   };
 
+  const formatK = (amount: number) => `₹${Math.round(amount / 1000)}K`;
+
   const gradeText: Record<string, string> = {
     'A': 'Excellent — Full Approval',
     'B': 'Good — Conditional Approval',
@@ -387,6 +389,211 @@ export default function BankingScreen() {
           <InputField label="ECS / EMI Payments" value={ecsEmi} onChangeText={setEcsEmi} />
           <InputField label="No. of Transactions" value={numTransactions} onChangeText={setNumTransactions} keyboardType="numeric" />
         </Card>
+
+        {/* ===== PERFIOS-STYLE RESULTS ===== */}
+        {result && (
+          <>
+            {/* 1. Banking Health Score */}
+            <View style={styles.healthScoreCard}>
+              <LinearGradient
+                colors={
+                  result.health_score >= 85 ? [colors.green, '#2E7D32'] :
+                  result.health_score >= 70 ? [colors.primary, colors.primaryDark] :
+                  result.health_score >= 55 ? [colors.yellow, colors.orange] :
+                  [colors.red, '#B71C1C']
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.healthScoreGradient}
+              >
+                <View style={styles.healthScoreLeft}>
+                  <Text style={styles.healthScoreLabel}>BANKING HEALTH SCORE</Text>
+                  <View style={styles.healthScoreRow}>
+                    <Text style={styles.healthScoreValue}>{result.health_score}</Text>
+                    <Text style={styles.healthScoreMax}> / 100</Text>
+                  </View>
+                  <View style={styles.healthStatusBadge}>
+                    <Text style={styles.healthStatusText}>{result.health_status}</Text>
+                  </View>
+                </View>
+                <View style={styles.healthScoreRight}>
+                  <Ionicons
+                    name={
+                      result.health_score >= 85 ? 'shield-checkmark' :
+                      result.health_score >= 70 ? 'checkmark-circle' :
+                      result.health_score >= 55 ? 'alert-circle' :
+                      'close-circle'
+                    }
+                    size={56}
+                    color="rgba(255,255,255,0.35)"
+                  />
+                </View>
+              </LinearGradient>
+            </View>
+
+            {/* 2. KPI Cards */}
+            <SectionHeader title="Key Banking KPIs" color={colors.primary} />
+            <View style={styles.kpiGrid}>
+              <View style={[styles.kpiCard, { borderLeftColor: colors.green }]}>
+                <Text style={styles.kpiLabel}>Avg Balance</Text>
+                <Text style={[styles.kpiValue, { color: colors.green }]}>
+                  ₹{result.input_data.average_balance.toLocaleString('en-IN')}
+                </Text>
+              </View>
+              <View style={[styles.kpiCard, { borderLeftColor: colors.primary }]}>
+                <Text style={styles.kpiLabel}>Monthly Inflow</Text>
+                <Text style={[styles.kpiValue, { color: colors.primary }]}>
+                  ₹{Math.round(result.monthly_inflow).toLocaleString('en-IN')}
+                </Text>
+              </View>
+              <View style={[styles.kpiCard, { borderLeftColor: result.monthly_outflow > result.monthly_inflow ? colors.red : colors.orange }]}>
+                <Text style={styles.kpiLabel}>Monthly Outflow</Text>
+                <Text style={[styles.kpiValue, { color: result.monthly_outflow > result.monthly_inflow ? colors.red : colors.orange }]}>
+                  ₹{Math.round(result.monthly_outflow).toLocaleString('en-IN')}
+                </Text>
+              </View>
+              <View style={[styles.kpiCard, { borderLeftColor: result.input_data.ecs_emi_payments > result.monthly_inflow * 0.4 ? colors.red : colors.yellow }]}>
+                <Text style={styles.kpiLabel}>EMI Obligations</Text>
+                <Text style={[styles.kpiValue, { color: result.input_data.ecs_emi_payments > result.monthly_inflow * 0.4 ? colors.red : colors.yellow }]}>
+                  ₹{result.input_data.ecs_emi_payments.toLocaleString('en-IN')}
+                </Text>
+              </View>
+              <View style={[styles.kpiCard, { borderLeftColor: result.input_data.cheque_bounces > 2 ? colors.red : colors.green }]}>
+                <Text style={styles.kpiLabel}>Bounce Count</Text>
+                <Text style={[styles.kpiValue, { color: result.input_data.cheque_bounces > 2 ? colors.red : colors.green }]}>
+                  {result.input_data.cheque_bounces}
+                </Text>
+              </View>
+            </View>
+
+            {/* 3. Cash Flow Chart */}
+            {result.cash_flow_trend.length > 0 && (
+              <>
+                <SectionHeader title="Cash Flow Trend" color={colors.cyan} />
+                <Card>
+                  <View style={styles.chartLegend}>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: colors.green }]} />
+                      <Text style={styles.legendText}>Inflow</Text>
+                    </View>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: colors.red }]} />
+                      <Text style={styles.legendText}>Outflow</Text>
+                    </View>
+                  </View>
+                  {(() => {
+                    const maxVal = Math.max(
+                      ...result.cash_flow_trend.map(m => Math.max(m.inflow, m.outflow))
+                    ) || 1;
+                    return result.cash_flow_trend.map((item, i) => (
+                      <View key={i} style={styles.chartRow}>
+                        <Text style={styles.chartMonth}>{item.month}</Text>
+                        <View style={styles.chartBarsCol}>
+                          <View style={styles.chartBarRow}>
+                            <View
+                              style={[
+                                styles.chartBarFill,
+                                {
+                                  width: `${(item.inflow / maxVal) * 100}%`,
+                                  backgroundColor: colors.green,
+                                },
+                              ]}
+                            />
+                            <Text style={styles.chartBarAmt}>
+                              {formatK(item.inflow)}
+                            </Text>
+                          </View>
+                          <View style={styles.chartBarRow}>
+                            <View
+                              style={[
+                                styles.chartBarFill,
+                                {
+                                  width: `${(item.outflow / maxVal) * 100}%`,
+                                  backgroundColor: colors.red + 'CC',
+                                },
+                              ]}
+                            />
+                            <Text style={styles.chartBarAmt}>
+                              {formatK(item.outflow)}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    ));
+                  })()}
+                </Card>
+              </>
+            )}
+
+            {/* 4. Risk Indicators */}
+            {result.risks.length > 0 && (
+              <>
+                <SectionHeader title="Risk Indicators" color={colors.red} />
+                <View style={styles.riskList}>
+                  {result.risks.map((risk, i) => (
+                    <View key={i} style={styles.riskCard}>
+                      <Ionicons name="warning" size={18} color={colors.red} />
+                      <Text style={styles.riskText}>{risk}</Text>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+
+            {/* 5. AI Summary */}
+            <SectionHeader title="AI Analysis Summary" color={colors.purple} />
+            <Card>
+              <View style={styles.eligibilityRow}>
+                <View style={[
+                  styles.eligibilityBadge,
+                  {
+                    backgroundColor:
+                      result.eligibility_status === 'ELIGIBLE' ? colors.green + '20' :
+                      result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? colors.yellow + '20' :
+                      colors.red + '20',
+                  }
+                ]}>
+                  <Ionicons
+                    name={
+                      result.eligibility_status === 'ELIGIBLE' ? 'checkmark-circle' :
+                      result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? 'alert-circle' :
+                      'close-circle'
+                    }
+                    size={16}
+                    color={
+                      result.eligibility_status === 'ELIGIBLE' ? colors.green :
+                      result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? colors.yellow :
+                      colors.red
+                    }
+                  />
+                  <Text style={[
+                    styles.eligibilityText,
+                    {
+                      color:
+                        result.eligibility_status === 'ELIGIBLE' ? colors.green :
+                        result.eligibility_status === 'CONDITIONALLY ELIGIBLE' ? colors.yellow :
+                        colors.red,
+                    }
+                  ]}>
+                    {result.eligibility_status}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.aiSummaryText}>{result.ai_summary}</Text>
+            </Card>
+
+            {/* 6. Insights Cards */}
+            <SectionHeader title="Key Insights" color={colors.primary} />
+            <View style={styles.insightsGrid}>
+              {result.insights.map((insight, i) => (
+                <View key={i} style={styles.insightCard}>
+                  <Ionicons name="bulb-outline" size={16} color={colors.primary} />
+                  <Text style={styles.insightText}>{insight}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
 
         {/* Credit Risk Assessment */}
         {result && (
@@ -865,5 +1072,210 @@ const styles = StyleSheet.create({
   resetButtonText: {
     color: colors.textSecondary,
     fontSize: 14,
+  },
+  // ===== PERFIOS-STYLE STYLES =====
+  healthScoreCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  healthScoreGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 24,
+  },
+  healthScoreLeft: {
+    flex: 1,
+  },
+  healthScoreRight: {
+    marginLeft: 12,
+  },
+  healthScoreLabel: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 1.5,
+    marginBottom: 8,
+  },
+  healthScoreRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginBottom: 12,
+  },
+  healthScoreValue: {
+    color: '#FFFFFF',
+    fontSize: 52,
+    fontWeight: '800',
+    lineHeight: 56,
+  },
+  healthScoreMax: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 18,
+    fontWeight: '500',
+    marginBottom: 10,
+  },
+  healthStatusBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+  },
+  healthStatusText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  kpiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  kpiCard: {
+    width: '48%',
+    backgroundColor: colors.cardBackground,
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderLeftWidth: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  kpiLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  kpiValue: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  chartLegend: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 12,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  legendText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+  },
+  chartRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 10,
+  },
+  chartMonth: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+    width: 28,
+  },
+  chartBarsCol: {
+    flex: 1,
+    gap: 3,
+  },
+  chartBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  chartBarFill: {
+    height: 8,
+    borderRadius: 4,
+    minWidth: 4,
+  },
+  chartBarAmt: {
+    color: colors.textMuted,
+    fontSize: 10,
+  },
+  riskList: {
+    gap: 8,
+    marginBottom: 16,
+  },
+  riskCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: colors.red + '10',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.red + '30',
+    padding: 14,
+  },
+  riskText: {
+    color: colors.red,
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+    lineHeight: 18,
+  },
+  eligibilityRow: {
+    marginBottom: 12,
+  },
+  eligibilityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    gap: 6,
+  },
+  eligibilityText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  aiSummaryText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 21,
+  },
+  insightsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  insightCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.primaryLight,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: colors.primary + '30',
+  },
+  insightText: {
+    color: colors.primaryDark,
+    fontSize: 12,
+    fontWeight: '500',
   },
 });

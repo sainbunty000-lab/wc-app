@@ -92,6 +92,16 @@ export interface BankingResult {
   strengths: string[];
   concerns: string[];
   recommendation: string;
+  // Perfios-style enhanced fields
+  health_score: number;
+  health_status: string;
+  monthly_inflow: number;
+  monthly_outflow: number;
+  cash_flow_trend: Array<{ month: string; inflow: number; outflow: number }>;
+  risks: string[];
+  insights: string[];
+  ai_summary: string;
+  eligibility_status: string;
   analysis_type: string;
 }
 
