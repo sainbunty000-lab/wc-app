@@ -70,6 +70,23 @@ export const getDashboardStats = async (): Promise<DashboardStats> => {
   return response.data;
 };
 
+// MIME type helper: derive correct type from file extension
+export const getMimeTypeFromExtension = (fileName: string): string => {
+  const ext = (fileName.toLowerCase().split('.').pop() || '');
+  const mimeTypes: Record<string, string> = {
+    pdf:  'application/pdf',
+    jpg:  'image/jpeg',
+    jpeg: 'image/jpeg',
+    png:  'image/png',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xls:  'application/vnd.ms-excel',
+    csv:  'text/csv',
+    heic: 'image/heic',
+    heif: 'image/heif',
+  };
+  return mimeTypes[ext] || 'application/octet-stream';
+};
+
 // Document Parsing via Backend (Gemini Vision AI)
 export interface ParsedFinancialData {
   // Balance Sheet fields
@@ -120,6 +137,20 @@ export const parseDocument = async (
   mimeType: string,
   documentType: string
 ): Promise<ParseDocumentResponse> => {
+  // Always resolve MIME type from extension; only use caller-supplied type as
+  // last resort when the extension is unrecognised.
+  const extensionMime = getMimeTypeFromExtension(fileName);
+  const resolvedMimeType =
+    extensionMime !== 'application/octet-stream'
+      ? extensionMime
+      : mimeType && mimeType !== 'application/octet-stream'
+      ? mimeType
+      : 'application/pdf';
+
+  if (__DEV__) {
+    console.log('[API] parseDocument — file:', fileName, '| mime:', resolvedMimeType, '| document_type:', documentType);
+  }
+
   const formData = new FormData();
 
   const fileMimeType = mimeType || 'image/jpeg';
@@ -146,7 +177,6 @@ export const parseDocument = async (
 
   if (__DEV__) {
     console.log('[API] Uploading document to:', `${API_BASE}/api/parse/upload`);
-    console.log('[API] File:', fileName, mimeType, 'Type:', documentType);
   }
 
   const response = await fetch(`${API_BASE}/api/parse/upload`, {
@@ -157,13 +187,21 @@ export const parseDocument = async (
     },
   });
 
+  if (__DEV__) {
+    console.log('[API] Raw response status:', response.status, response.statusText);
+  }
+
   if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    if (__DEV__) {
+      console.log('[API] Error body:', errorBody);
+    }
     throw new Error(`Document parse failed: ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json();
   if (__DEV__) {
-    console.log('[API] Parse response:', data);
+    console.log('[API] Parse response:', JSON.stringify(data));
   }
 
   return {
