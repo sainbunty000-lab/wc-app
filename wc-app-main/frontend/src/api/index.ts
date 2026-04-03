@@ -10,7 +10,12 @@ import {
   DashboardStats,
 } from '../types';
 
-const API_BASE = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+const PRODUCTION_API_URL = 'https://perfect-backend-production-8ad7.up.railway.app';
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || PRODUCTION_API_URL;
+
+if (__DEV__) {
+  console.log('[API] Using base URL:', API_BASE);
+}
 
 const api = axios.create({
   baseURL: `${API_BASE}/api`,
@@ -64,7 +69,7 @@ export const getDashboardStats = async (): Promise<DashboardStats> => {
   return response.data;
 };
 
-// Document Parsing via Local Backend (Gemini Vision AI)
+// Document Parsing via Backend (Gemini Vision AI)
 export interface ParsedFinancialData {
   // Balance Sheet fields
   current_assets?: number;
@@ -123,8 +128,10 @@ export const parseDocument = async (
   });
   formData.append('document_type', documentType);
 
-  console.log('Sending to local backend:', `${API_BASE}/api/parse/upload`);
-  console.log('File:', fileName, mimeType, 'Type:', documentType);
+  if (__DEV__) {
+    console.log('[API] Uploading document to:', `${API_BASE}/api/parse/upload`);
+    console.log('[API] File:', fileName, mimeType, 'Type:', documentType);
+  }
 
   const response = await fetch(`${API_BASE}/api/parse/upload`, {
     method: 'POST',
@@ -134,8 +141,14 @@ export const parseDocument = async (
     },
   });
 
+  if (!response.ok) {
+    throw new Error(`Document parse failed: ${response.status} ${response.statusText}`);
+  }
+
   const data = await response.json();
-  console.log('Parse response:', data);
+  if (__DEV__) {
+    console.log('[API] Parse response:', data);
+  }
 
   return {
     success: data.success,
