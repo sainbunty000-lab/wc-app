@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { Platform } from 'react-native';
 import {
   WorkingCapitalInput,
   WorkingCapitalResult,
@@ -152,12 +153,26 @@ export const parseDocument = async (
 
   const formData = new FormData();
 
-  // @ts-ignore - React Native FormData accepts this format
-  formData.append('file', {
-    uri: fileUri,
-    name: fileName,
-    type: resolvedMimeType,
-  });
+  const fileMimeType = mimeType || 'image/jpeg';
+  if (Platform.OS === 'web') {
+    // On web, the blob: URI must be fetched and converted to a File object
+    // because browser FormData does not accept the React Native {uri, name, type} format
+    const blobResponse = await fetch(fileUri);
+    if (!blobResponse.ok) {
+      throw new Error(`Failed to read file: ${blobResponse.status} ${blobResponse.statusText}`);
+    }
+    const blob = await blobResponse.blob();
+    const file = new File([blob], fileName, { type: fileMimeType });
+    formData.append('file', file);
+  } else {
+    // React Native (iOS / Android) — use the native FormData file format
+    // @ts-ignore - React Native FormData accepts this format
+    formData.append('file', {
+      uri: fileUri,
+      name: fileName,
+      type: fileMimeType,
+    });
+  }
   formData.append('document_type', documentType);
 
   if (__DEV__) {
