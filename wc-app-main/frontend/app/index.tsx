@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, Image, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -130,10 +130,13 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <Animated.View style={[styles.header, headerStyle]}>
-          <View>
-            <Text style={styles.brandName}>FINANCIAL ANALYTICS</Text>
-            <Text style={styles.title}>Capital Analytics</Text>
-            <Text style={styles.subtitle}>Professional Financial Analysis Platform</Text>
+          <View style={styles.headerLeft}>
+            <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+            <View>
+              <Text style={styles.brandName}>DHANUSH ENTERPRISES</Text>
+              <Text style={styles.title}>Capital Analytics</Text>
+              <Text style={styles.subtitle}>Professional Financial Analysis Platform</Text>
+            </View>
           </View>
           <View style={styles.headerBadge}>
             <Ionicons name="shield-checkmark-outline" size={20} color={colors.primary} />
@@ -209,12 +212,25 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 20,
   },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10,
+  },
+  logo: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
   brandName: {
     color: colors.primary,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginBottom: 4,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 2,
   },
   title: {
     color: colors.text,

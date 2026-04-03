@@ -23,7 +23,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { LineChart, BarChart } from 'react-native-gifted-charts';
 import { colors } from '../src/theme/colors';
-import { Card, SectionHeader, KPIBox, ChartCard, DataTable } from '../src/components';
+import { Card, SectionHeader, KPIBox, ChartCard, DataTable, AppHeader } from '../src/components';
 import { getDashboardStats } from '../src/api';
 import { DashboardStats } from '../src/types';
 import { useAppStore } from '../src/store';
@@ -172,15 +172,13 @@ export default function DashboardScreen() {
         }
       >
         {/* ── Header ── */}
-        <Animated.View style={[styles.header, headerStyle]}>
-          <View>
-            <Text style={styles.brandName}>FINANCIAL ANALYTICS</Text>
-            <Text style={styles.title}>Dashboard</Text>
-            <Text style={styles.date}>{dateString}</Text>
-          </View>
-          <TouchableOpacity style={styles.refreshButton} onPress={onRefresh} activeOpacity={0.7}>
-            <Ionicons name="refresh-outline" size={22} color={colors.primary} />
-          </TouchableOpacity>
+        <Animated.View style={[headerStyle]}>
+          <AppHeader
+            title="Dashboard"
+            subtitle={dateString}
+            rightIcon="refresh-outline"
+            onRightPress={onRefresh}
+          />
         </Animated.View>
 
         {/* ── Status badges ── */}
@@ -407,34 +405,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
     paddingBottom: 32,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
-  },
-  brandName: {
-    color: colors.primary,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginBottom: 4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 26,
-    fontWeight: '800',
-    marginBottom: 2,
-  },
-  date: {
-    color: colors.textSecondary,
-    fontSize: 13,
-  },
-  refreshButton: {
-    padding: 8,
-    backgroundColor: colors.primaryLight,
-    borderRadius: 20,
   },
   badgeRow: {
     flexDirection: 'row',

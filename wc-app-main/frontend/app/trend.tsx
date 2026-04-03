@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { LineChart } from 'react-native-gifted-charts';
 import { colors } from '../src/theme/colors';
-import { Card, SectionHeader, InputField } from '../src/components';
+import { Card, SectionHeader, InputField, AppHeader, InsightCard, SummarySection } from '../src/components';
 import { analyzeMultiYear, saveCase, exportPDF } from '../src/api';
 import { MultiYearResult, YearData } from '../src/types';
 import { useAppStore } from '../src/store';
@@ -44,13 +44,6 @@ const defaultYear = (year: string): YearInputs => ({
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CHART_WIDTH = SCREEN_WIDTH - 64;
 
-const INSIGHT_ICONS: React.ComponentProps<typeof Ionicons>['name'][] = [
-  'trending-up-outline',
-  'bulb-outline',
-  'analytics-outline',
-  'shield-checkmark-outline',
-  'alert-circle-outline',
-];
 
 const getTrendEmoji = (label?: string | null): string => {
   if (!label) return '📊';
@@ -193,11 +186,10 @@ export default function TrendScreen() {
         extraScrollHeight={100}
       >
         {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.brandName}>FINANCIAL ANALYTICS</Text>
-          <Text style={styles.title}>Multi-Year Analysis</Text>
-          <Text style={styles.subtitle}>Balance Sheet & P&L Trend Comparison</Text>
-        </View>
+        <AppHeader
+          title="Multi-Year Analysis"
+          subtitle="Balance Sheet & P&L Trend Comparison"
+        />
 
         {/* Year Tabs */}
         <View style={styles.yearTabs}>
@@ -437,37 +429,14 @@ export default function TrendScreen() {
 
             {/* ── AI Summary ── */}
             <SectionHeader title="Financial Summary" color={colors.primary} />
-            <Card>
-              {result.trend_analysis?.analysis.eligibility_status && (
-                <View style={styles.eligibilityRow}>
-                  <Text style={styles.eligibilityLabel}>Eligibility Decision:</Text>
-                  <View style={[styles.eligibilityBadge, { backgroundColor: getEligibilityColor(result.trend_analysis.analysis.eligibility_status) + '25' }]}>
-                    <Text style={[styles.eligibilityStatus, { color: getEligibilityColor(result.trend_analysis.analysis.eligibility_status) }]}>
-                      {result.trend_analysis.analysis.eligibility_status}
-                    </Text>
-                  </View>
-                </View>
-              )}
-              <Text style={styles.summaryText}>
-                {result.trend_analysis?.analysis.summary ?? result.recommendation}
-              </Text>
-            </Card>
+            <SummarySection
+              summary={result.trend_analysis?.analysis.summary ?? result.recommendation}
+              eligibilityStatus={result.trend_analysis?.analysis.eligibility_status}
+            />
 
             {/* ── Insights Cards ── */}
             <SectionHeader title="Key Insights" color={colors.primary} />
-            <Card>
-              {result.insights.map((insight, idx) => (
-                <View
-                  key={idx}
-                  style={[styles.insightCard, idx === result.insights.length - 1 && styles.insightCardLast]}
-                >
-                  <View style={styles.insightIconBox}>
-                    <Ionicons name={INSIGHT_ICONS[idx % INSIGHT_ICONS.length]} size={14} color={colors.primary} />
-                  </View>
-                  <Text style={styles.insightText}>{insight}</Text>
-                </View>
-              ))}
-            </Card>
+            <InsightCard items={result.insights} type="recommendation" />
 
             {/* ── Year Comparison Table ── */}
             <SectionHeader title="Year Comparison" color={colors.yellow} />
@@ -523,51 +492,15 @@ export default function TrendScreen() {
             {result.ai_analysis && (
               <>
                 <SectionHeader title="AI Eligibility Assessment" color={colors.primary} />
-                {/* Eligibility Badge */}
-                <Card>
-                  <View style={styles.eligibilityBadgeContainer}>
-                    <View style={[
-                      styles.eligibilityBadge,
-                      {
-                        backgroundColor: result.ai_analysis.eligibility_status === 'Eligible' ? `${colors.green}15` : result.ai_analysis.eligibility_status === 'Conditional' ? `${colors.yellow}15` : `${colors.red}15`,
-                        borderColor: result.ai_analysis.eligibility_status === 'Eligible' ? colors.green : result.ai_analysis.eligibility_status === 'Conditional' ? colors.yellow : colors.red,
-                      }
-                    ]}>
-                      <Ionicons
-                        name={result.ai_analysis.eligibility_status === 'Eligible' ? 'checkmark-circle' : result.ai_analysis.eligibility_status === 'Conditional' ? 'alert-circle' : 'close-circle'}
-                        size={28}
-                        color={result.ai_analysis.eligibility_status === 'Eligible' ? colors.green : result.ai_analysis.eligibility_status === 'Conditional' ? colors.yellow : colors.red}
-                      />
-                      <Text style={[
-                        styles.eligibilityText,
-                        { color: result.ai_analysis.eligibility_status === 'Eligible' ? colors.green : result.ai_analysis.eligibility_status === 'Conditional' ? colors.yellow : colors.red }
-                      ]}>
-                        {result.ai_analysis.eligibility_status}
-                      </Text>
-                    </View>
-                    {result.ai_analysis.confidence != null && (
-                      <Text style={styles.confidenceText}>
-                        Confidence: {Math.round(result.ai_analysis.confidence * 100)}%
-                      </Text>
-                    )}
-                  </View>
-                  <Text style={styles.recommendationText}>{result.ai_analysis.summary}</Text>
-                </Card>
+                <SummarySection
+                  summary={result.ai_analysis.summary}
+                  eligibilityStatus={result.ai_analysis.eligibility_status}
+                  confidence={result.ai_analysis.confidence}
+                />
                 {/* Risks */}
                 {result.ai_analysis.risks && result.ai_analysis.risks.length > 0 &&
                   result.ai_analysis.risks[0] !== 'No major risks identified from available data.' && (
-                  <Card>
-                    <View style={styles.insightRow}>
-                      <Ionicons name="warning" size={16} color={colors.red} />
-                      <Text style={[styles.insightText, { color: colors.red, fontWeight: '700' }]}>Risk Alerts</Text>
-                    </View>
-                    {result.ai_analysis.risks.map((risk, idx) => (
-                      <View key={idx} style={styles.insightRow}>
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.red, marginTop: 6 }} />
-                        <Text style={[styles.insightText, { color: colors.text }]}>{risk}</Text>
-                      </View>
-                    ))}
-                  </Card>
+                  <InsightCard items={result.ai_analysis.risks} type="risk" title="Risk Alerts" />
                 )}
               </>
             )}
@@ -618,23 +551,6 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: 20,
-  },
-  brandName: {
-    color: colors.purple,
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 2,
-    marginBottom: 4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  subtitle: {
-    color: colors.textSecondary,
-    fontSize: 13,
   },
   yearTabs: {
     flexDirection: 'row',
