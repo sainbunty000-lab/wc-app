@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
 import { colors } from '../src/theme/colors';
 import { Card, SectionHeader, InputField, StatusBadge, AppHeader, InsightCard, SummarySection } from '../src/components';
-import { analyzeBanking, saveCase, parseDocument, exportPDF } from '../src/api';
+import { analyzeBanking, saveCase, parseDocument, exportPDF, getMimeTypeFromExtension } from '../src/api';
 import { BankingResult } from '../src/types';
 import { useAppStore } from '../src/store';
 
@@ -70,7 +70,7 @@ export default function BankingScreen() {
         setBankStatementFile({
           name: file.name,
           uri: file.uri,
-          type: file.mimeType || 'application/octet-stream',
+          type: getMimeTypeFromExtension(file.name),
           size: file.size,
         });
       }

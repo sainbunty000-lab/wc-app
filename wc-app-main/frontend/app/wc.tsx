@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
 import { colors } from '../src/theme/colors';
 import { Card, SectionHeader, InputField, MetricCard } from '../src/components';
-import { analyzeWorkingCapital, saveCase, parseDocument, exportPDF } from '../src/api';
+import { analyzeWorkingCapital, saveCase, parseDocument, exportPDF, getMimeTypeFromExtension } from '../src/api';
 import { WorkingCapitalResult } from '../src/types';
 import { useAppStore } from '../src/store';
 
@@ -72,7 +72,7 @@ export default function WCScreen() {
         setBalanceSheetFile({
           name: file.name,
           uri: file.uri,
-          type: file.mimeType || 'application/octet-stream',
+          type: getMimeTypeFromExtension(file.name),
           size: file.size,
         });
       }
@@ -106,7 +106,7 @@ export default function WCScreen() {
         setPlFile({
           name: file.name,
           uri: file.uri,
-          type: file.mimeType || 'application/octet-stream',
+          type: getMimeTypeFromExtension(file.name),
           size: file.size,
         });
       }
