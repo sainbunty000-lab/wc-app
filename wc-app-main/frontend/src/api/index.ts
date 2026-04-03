@@ -109,6 +109,7 @@ export interface ParsedFinancialData {
 export interface ParseDocumentResponse {
   success: boolean;
   parsed_data: ParsedFinancialData;
+  normalized_data?: ParsedFinancialData;
   message: string;
 }
 
@@ -153,6 +154,7 @@ export const parseDocument = async (
   return {
     success: data.success,
     parsed_data: data.parsed_data || {},
+    normalized_data: data.normalized_data || undefined,
     message: data.message || '',
   };
 };

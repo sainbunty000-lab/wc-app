@@ -143,13 +143,15 @@ export default function WCScreen() {
           console.log('BS parse response:', response);
           
           if (response.success && response.parsed_data) {
-            const data = response.parsed_data;
+            const data = (response.normalized_data && Object.keys(response.normalized_data).length > 0)
+              ? response.normalized_data
+              : response.parsed_data;
             if (data.current_assets) setCurrentAssets(String(data.current_assets));
             if (data.current_liabilities) setCurrentLiabilities(String(data.current_liabilities));
             if (data.inventory) setInventory(String(data.inventory));
-            if (data.debtors || data.receivables) setDebtors(String(data.debtors || data.receivables));
-            if (data.creditors || data.payables) setCreditors(String(data.creditors || data.payables));
-            if (data.cash_bank_balance || data.cash) setCashBank(String(data.cash_bank_balance || data.cash));
+            if (data.receivables || data.debtors) setDebtors(String(data.receivables || data.debtors));
+            if (data.payables || data.creditors) setCreditors(String(data.payables || data.creditors));
+            if (data.cash || data.cash_bank_balance) setCashBank(String(data.cash || data.cash_bank_balance));
             bsSuccess = Object.keys(data).length > 0;
           }
         } catch (bsError: any) {
@@ -173,11 +175,13 @@ export default function WCScreen() {
           console.log('PL parse response:', response);
           
           if (response.success && response.parsed_data) {
-            const data = response.parsed_data;
+            const data = (response.normalized_data && Object.keys(response.normalized_data).length > 0)
+              ? response.normalized_data
+              : response.parsed_data;
             if (data.revenue || data.sales) setRevenue(String(data.revenue || data.sales));
             if (data.cogs || data.cost_of_goods_sold) setCogs(String(data.cogs || data.cost_of_goods_sold));
             if (data.purchases) setPurchases(String(data.purchases));
-            if (data.operating_expenses || data.expenses) setOpex(String(data.operating_expenses || data.expenses));
+            if (data.expenses || data.operating_expenses) setOpex(String(data.expenses || data.operating_expenses));
             if (data.net_profit || data.profit) setNetProfit(String(data.net_profit || data.profit));
             plSuccess = Object.keys(data).length > 0;
           }
